@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { randomUUID } from "crypto";
 import { auth } from "@/auth";
 import { supabase } from "@/lib/supabase";
 
@@ -38,7 +39,7 @@ export async function POST(req: NextRequest) {
   await supabase.from("business_units").delete().eq("tenant_id", tid);
   await supabase.from("business_units").insert(
     units.map((u: any, i: number) => ({
-      id: crypto.randomUUID(),
+      id: randomUUID(),
       tenant_id: tid,
       sort_order: i,
       name: u.name,
