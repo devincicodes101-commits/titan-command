@@ -9,16 +9,6 @@ export const authConfig = {
   },
   session: { strategy: "jwt" as const },
   callbacks: {
-    authorized({ auth, request: { nextUrl } }) {
-      const isLoggedIn = !!auth?.user;
-      const PUBLIC = ["/login", "/signup", "/api/auth", "/demo"];
-      const isPublic = PUBLIC.some((p) => nextUrl.pathname.startsWith(p));
-      if (!isLoggedIn && !isPublic) return false;
-      if (isLoggedIn && (nextUrl.pathname === "/login" || nextUrl.pathname === "/signup")) {
-        return Response.redirect(new URL("/", nextUrl));
-      }
-      return true;
-    },
     jwt({ token, user }: any) {
       if (user) {
         token.id = user.id;
