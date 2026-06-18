@@ -1,10 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import bcrypt from "bcryptjs";
 import { randomUUID } from "crypto";
-import { supabase } from "@/lib/supabase";
+import { getSupabase } from "@/lib/supabase";
 
 export async function POST(req: NextRequest) {
   try {
+    const supabase = getSupabase();
     const { companyName, email, password } = await req.json();
 
     if (!companyName || !email || !password) {
@@ -70,6 +71,7 @@ export async function POST(req: NextRequest) {
 }
 
 async function makeSlugUnique(base: string): Promise<string> {
+  const supabase = getSupabase();
   let slug = base;
   let i = 1;
   while (true) {

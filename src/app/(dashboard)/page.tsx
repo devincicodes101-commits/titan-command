@@ -1,5 +1,5 @@
 import { auth } from "@/auth";
-import { supabase } from "@/lib/supabase";
+import { getSupabase } from "@/lib/supabase";
 import CommandBoard from "@/components/CommandBoard";
 
 const TRADE_MAP: Record<string, string> = {
@@ -13,6 +13,7 @@ export default async function DashboardPage() {
   if (!session) return null;
 
   const tid = session.user.tenantId;
+  const supabase = getSupabase();
 
   const [{ data: goals }, { data: units }, { data: tenant }] = await Promise.all([
     supabase.from("tenant_goals").select("*").eq("tenant_id", tid).single(),
