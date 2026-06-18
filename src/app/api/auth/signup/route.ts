@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
 import bcrypt from "bcryptjs";
+import { supabase } from "@/lib/supabase";
 
 export async function POST(req: NextRequest) {
   try {
@@ -13,38 +13,52 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Password must be at least 8 characters." }, { status: 400 });
     }
 
-    const existing = await prisma.user.findUnique({ where: { email } });
+    const { data: existing } = await supabase
+      .from("users")
+      .select("id")
+      .eq("email", email)
+      .single();
+
     if (existing) {
       return NextResponse.json({ error: "An account with that email already exists." }, { status: 409 });
     }
 
-    const slug = companyName
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, "-")
-      .replace(/^-|-$/g, "")
-      .slice(0, 48);
+    const slug = await makeSlugUnique(
+      companyName.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 48)
+    );
 
-    const uniqueSlug = await makeSlugUnique(slug);
     const passwordHash = await bcrypt.hash(password, 12);
+    const tenantId = crypto.randomUUID();
+    const now = new Date().toISOString();
 
-    await prisma.tenant.create({
-      data: {
-        name: companyName,
-        slug: uniqueSlug,
-        users: {
-          create: { email, passwordHash, role: "OWNER" },
-        },
-        goals: {
-          create: {},
-        },
-        crmCredentials: {
-          create: { provider: "MANUAL" },
-        },
-        businessUnits: {
-          create: defaultBusinessUnits(),
-        },
-      },
+    await supabase.from("tenants").insert({
+      id: tenantId, name: companyName, slug, trade: "HVAC",
+      created_at: now, updated_at: now,
     });
+
+    await supabase.from("users").insert({
+      id: crypto.randomUUID(), tenant_id: tenantId, email,
+      password_hash: passwordHash, role: "OWNER",
+      created_at: now, updated_at: now,
+    });
+
+    await supabase.from("tenant_goals").insert({
+      id: crypto.randomUUID(), tenant_id: tenantId,
+      monthly_revenue_goal: 0, monthly_sold_hour_goal: 0,
+      weekly_revenue_goal: 0, weekly_sold_hour_goal: 0,
+      working_days_month: 20, created_at: now, updated_at: now,
+    });
+
+    await supabase.from("crm_credentials").insert({
+      id: crypto.randomUUID(), tenant_id: tenantId,
+      provider: "MANUAL", created_at: now, updated_at: now,
+    });
+
+    await supabase.from("business_units").insert([
+      { id: crypto.randomUUID(), tenant_id: tenantId, sort_order: 0, name: "Maintenance",     target_close_rate: 65, target_rpl: 454,   includes_install: false, created_at: now, updated_at: now },
+      { id: crypto.randomUUID(), tenant_id: tenantId, sort_order: 1, name: "Demand Service",  target_close_rate: 50, target_rpl: 1100,  includes_install: false, created_at: now, updated_at: now },
+      { id: crypto.randomUUID(), tenant_id: tenantId, sort_order: 2, name: "Equipment Sales", target_close_rate: 50, target_rpl: 12000, includes_install: true,  created_at: now, updated_at: now },
+    ]);
 
     return NextResponse.json({ ok: true });
   } catch (err) {
@@ -56,16 +70,9 @@ export async function POST(req: NextRequest) {
 async function makeSlugUnique(base: string): Promise<string> {
   let slug = base;
   let i = 1;
-  while (await prisma.tenant.findUnique({ where: { slug } })) {
+  while (true) {
+    const { data } = await supabase.from("tenants").select("id").eq("slug", slug).single();
+    if (!data) return slug;
     slug = `${base}-${i++}`;
   }
-  return slug;
-}
-
-function defaultBusinessUnits() {
-  return [
-    { sortOrder: 0, name: "Maintenance", targetCloseRate: 65, targetRpl: 454 },
-    { sortOrder: 1, name: "Demand Service", targetCloseRate: 50, targetRpl: 1100 },
-    { sortOrder: 2, name: "Equipment Sales", targetCloseRate: 50, targetRpl: 12000, includesInstall: true },
-  ];
 }
