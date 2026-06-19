@@ -47,6 +47,14 @@ function showInstallBoard(trade: Trade) {
   return trade === "HVAC" || trade === "Other";
 }
 
+function showDeptPerformance(trade: Trade) {
+  return trade === "HVAC";
+}
+
+function pad(n: number) {
+  return String(n).padStart(2, "0");
+}
+
 // ─── Formatting helpers (must match HTML exactly) ────────────────────────────
 
 function fmtCurrency(val: number) {
@@ -112,6 +120,12 @@ export default function CommandBoard({ savedGoals }: Props) {
     defaultUnits(trade, savedGoals?.businessUnits)
   );
 
+  const [deptPerformance, setDeptPerformance] = useState<Record<string, { revenue: number; jobsCompleted: number }>>({
+    Maintenance: { revenue: 0, jobsCompleted: 0 },
+    Service: { revenue: 0, jobsCompleted: 0 },
+    Installation: { revenue: 0, jobsCompleted: 0 },
+  });
+
   // Re-map unit names when trade changes (but keep numeric values)
   useEffect(() => {
     const names = unitNamesForTrade(trade, savedGoals?.businessUnits);
@@ -142,6 +156,20 @@ export default function CommandBoard({ savedGoals }: Props) {
   const daysElapsed = Math.max(1, inputs.workingDaysMonth - inputs.workingDaysLeftMonth);
   const board = calculateBoard(inputs, visibleUnits);
   const unitOutputs: UnitOutputs[] = visibleUnits.map((u) => calculateUnit(u, daysElapsed));
+
+  const salesUnitIndex = visibleUnits.findIndex((u) => u.includesInstall);
+  const salesDept = salesUnitIndex >= 0
+    ? { revenue: visibleUnits[salesUnitIndex].mtdSales, jobsCompleted: unitOutputs[salesUnitIndex].closedJobs, avgTicket: unitOutputs[salesUnitIndex].avgSale }
+    : { revenue: 0, jobsCompleted: 0, avgTicket: 0 };
+
+  const setDept = useCallback((name: string, key: "revenue" | "jobsCompleted", val: number) => {
+    setDeptPerformance((prev) => ({ ...prev, [name]: { ...prev[name], [key]: val } }));
+  }, []);
+
+  let sectionNum = 5;
+  const installSectionNum = showInstallBoard(trade) ? sectionNum++ : null;
+  const deptSectionNum = showDeptPerformance(trade) ? sectionNum++ : null;
+  const foundrySectionNum = sectionNum;
 
   return (
     <div style={styles.root}>
@@ -362,10 +390,10 @@ export default function CommandBoard({ savedGoals }: Props) {
           </div>
         </section>
 
-        {/* ── Section 05 — Install Board (HVAC only) ──────────────── */}
+        {/* ── Install Board (HVAC only) ──────────────── */}
         {showInstallBoard(trade) && (
           <section style={{ ...styles.card, marginTop: "24px" }}>
-            <SectionHead num="05" title="Equipment Installation Command Board" />
+            <SectionHead num={pad(installSectionNum!)} title="Equipment Installation Command Board" />
             <div style={styles.resultsGrid}>
               <ResultBox label="Install Crews Today" value={String(inputs.installCrews ?? 0)}
                 tip="The number of install crews working today." />
@@ -394,9 +422,36 @@ export default function CommandBoard({ savedGoals }: Props) {
           </section>
         )}
 
-        {/* ── Section 06 — Foundry Insight ────────────────────────── */}
+        {/* ── Department Performance (HVAC only) ──────────────── */}
+        {showDeptPerformance(trade) && (
+          <section style={{ ...styles.card, marginTop: "24px" }}>
+            <SectionHead num={pad(deptSectionNum!)} title="Department Performance" />
+            <div style={styles.resultsGrid}>
+              <DeptCard label="Sales" revenue={salesDept.revenue} jobsCompleted={salesDept.jobsCompleted} avgTicket={salesDept.avgTicket} />
+              {(["Maintenance", "Service", "Installation"] as const).map((name) => {
+                const d = deptPerformance[name];
+                const avgTicket = d.jobsCompleted > 0 ? d.revenue / d.jobsCompleted : 0;
+                return <DeptCard key={name} label={name} revenue={d.revenue} jobsCompleted={d.jobsCompleted} avgTicket={avgTicket} />;
+              })}
+            </div>
+            <div style={{ marginTop: "20px" }}>
+              <h4 style={styles.h4}>Manual Entry — Maintenance / Service / Installation</h4>
+              <div style={styles.inputGrid}>
+                {(["Maintenance", "Service", "Installation"] as const).map((name) => (
+                  <div key={name} style={{ display: "contents" }}>
+                    <NumField label={`${name} Revenue`} val={deptPerformance[name].revenue} onChange={(v) => setDept(name, "revenue", v)} />
+                    <NumField label={`${name} Jobs Completed`} val={deptPerformance[name].jobsCompleted} onChange={(v) => setDept(name, "jobsCompleted", v)} step={1} />
+                  </div>
+                ))}
+              </div>
+              <p style={styles.note}>Sales figures above are pulled automatically from the Equipment Sales row in the Business Unit Scoreboard. Maintenance, Service, and Installation are manual entry until the ServiceTitan connection is built.</p>
+            </div>
+          </section>
+        )}
+
+        {/* ── Foundry Insight ────────────────────────── */}
         <section style={{ ...styles.card, marginTop: "24px" }}>
-          <SectionHead num={showInstallBoard(trade) ? "06" : "05"} title="Foundry Insight" />
+          <SectionHead num={pad(foundrySectionNum)} title="Foundry Insight" />
           <p style={styles.insight}>{board.insightText}</p>
           <button
             type="button"
@@ -488,6 +543,21 @@ function ResultBox({ label, value, tip, colorClass }: {
     <div style={styles.resultBox} title={tip}>
       <strong style={styles.resultLabel}>{label}</strong>
       <span style={{ ...styles.resultValue, color }}>{value}</span>
+    </div>
+  );
+}
+
+function DeptCard({ label, revenue, jobsCompleted, avgTicket }: {
+  label: string; revenue: number; jobsCompleted: number; avgTicket: number;
+}) {
+  return (
+    <div style={styles.resultBox}>
+      <strong style={styles.resultLabel}>{label}</strong>
+      <span style={{ ...styles.resultValue, fontSize: "20px" }}>{fmtCurrency(revenue)}</span>
+      <div style={{ marginTop: "10px", display: "flex", justifyContent: "space-between", fontSize: "11px", color: "var(--tf-muted)" }}>
+        <span>{jobsCompleted} jobs</span>
+        <span>{fmtCurrency(avgTicket)} avg</span>
+      </div>
     </div>
   );
 }
