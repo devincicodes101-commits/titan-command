@@ -172,11 +172,11 @@ export default function CommandBoard({ savedGoals }: Props) {
   const foundrySectionNum = sectionNum;
 
   return (
-    <div style={styles.root}>
+    <div className="tf-root" style={styles.root}>
       <div style={styles.wrap}>
 
         {/* ── Header ──────────────────────────────────────────────── */}
-        <div style={styles.header}>
+        <div className="tf-header" style={styles.header}>
           <div>
             <h1 style={styles.title}>
               Titan Daily<br />
@@ -196,7 +196,7 @@ export default function CommandBoard({ savedGoals }: Props) {
         </div>
 
         {/* ── Scoreboard ──────────────────────────────────────────── */}
-        <div style={styles.scoreboard}>
+        <div className="tf-scoreboard" style={styles.scoreboard}>
           <ScoreCard label="Daily Command Goal" value={fmtCurrency(board.dailyCommandGoal)} main
             tip="The higher of Revenue Needed Today and Weekly Need Today." />
           <ScoreCard label="Revenue Needed Today" value={fmtCurrency(board.revenueNeededToday)}
@@ -210,8 +210,8 @@ export default function CommandBoard({ savedGoals }: Props) {
         </div>
 
         {/* ── Section 01 + 02 ─────────────────────────────────────── */}
-        <div style={styles.twoCol}>
-          <section style={styles.card}>
+        <div className="tf-two-col" style={styles.twoCol}>
+          <section className="tf-card" style={styles.card}>
             <SectionHead num="01" title="Monthly / Weekly Setup" />
             <InputGrid>
               <InputField label="Today's Date" value={today} readOnly />
@@ -237,7 +237,7 @@ export default function CommandBoard({ savedGoals }: Props) {
             </InputGrid>
           </section>
 
-          <section style={styles.card}>
+          <section className="tf-card" style={styles.card}>
             <SectionHead num="02" title="Morning CRM Inputs" />
             <InputGrid>
               <NumField label="MTD Revenue" val={inputs.mtdRevenue} onChange={(v) => setInput("mtdRevenue", v)} />
@@ -253,9 +253,9 @@ export default function CommandBoard({ savedGoals }: Props) {
         </div>
 
         {/* ── Section 03 — Today's Targets ────────────────────────── */}
-        <section style={{ ...styles.card, marginTop: "24px" }}>
+        <section className="tf-card" style={{ ...styles.card, marginTop: "24px" }}>
           <SectionHead num="03" title="Today's Targets" />
-          <div style={styles.resultsGrid}>
+          <div className="tf-results-grid" style={styles.resultsGrid}>
             <ResultBox label="Leads Needed Today" value={String(board.leadsNeeded)}
               tip="New revenue needed today divided by company Revenue Per Lead, rounded up." />
             <ResultBox label="Sales Needed Today" value={String(board.salesNeeded)}
@@ -292,7 +292,7 @@ export default function CommandBoard({ savedGoals }: Props) {
         </section>
 
         {/* ── Section 04 — Business Unit Scoreboard ───────────────── */}
-        <section style={{ ...styles.card, marginTop: "24px" }}>
+        <section className="tf-card" style={{ ...styles.card, marginTop: "24px" }}>
           <SectionHead num="04" title="Business Unit Scoreboard" />
           <div style={styles.tableWrap}>
             <table style={styles.table}>
@@ -392,9 +392,9 @@ export default function CommandBoard({ savedGoals }: Props) {
 
         {/* ── Install Board (HVAC only) ──────────────── */}
         {showInstallBoard(trade) && (
-          <section style={{ ...styles.card, marginTop: "24px" }}>
+          <section className="tf-card" style={{ ...styles.card, marginTop: "24px" }}>
             <SectionHead num={pad(installSectionNum!)} title="Equipment Installation Command Board" />
-            <div style={styles.resultsGrid}>
+            <div className="tf-results-grid" style={styles.resultsGrid}>
               <ResultBox label="Install Crews Today" value={String(inputs.installCrews ?? 0)}
                 tip="The number of install crews working today." />
               <ResultBox label="MTD Invoiced Install Revenue" value={fmtCurrency(inputs.installRevenue ?? 0)}
@@ -404,7 +404,7 @@ export default function CommandBoard({ savedGoals }: Props) {
               <ResultBox label="Install Revenue Pending" value={fmtCurrency(board.installRevenuePending)}
                 tip="MTD Equipment Sales Revenue minus MTD Invoiced Install Revenue." />
             </div>
-            <div style={styles.twoCol2}>
+            <div className="tf-two-col" style={styles.twoCol2}>
               <div style={styles.card2}>
                 <h4 style={styles.h4}>Install Operations Inputs</h4>
                 <InputGrid>
@@ -424,9 +424,9 @@ export default function CommandBoard({ savedGoals }: Props) {
 
         {/* ── Department Performance (HVAC only) ──────────────── */}
         {showDeptPerformance(trade) && (
-          <section style={{ ...styles.card, marginTop: "24px" }}>
+          <section className="tf-card" style={{ ...styles.card, marginTop: "24px" }}>
             <SectionHead num={pad(deptSectionNum!)} title="Department Performance" />
-            <div style={styles.resultsGrid}>
+            <div className="tf-results-grid" style={styles.resultsGrid}>
               <DeptCard label="Sales" revenue={salesDept.revenue} jobsCompleted={salesDept.jobsCompleted} avgTicket={salesDept.avgTicket} />
               {(["Maintenance", "Service", "Installation"] as const).map((name) => {
                 const d = deptPerformance[name];
@@ -436,7 +436,7 @@ export default function CommandBoard({ savedGoals }: Props) {
             </div>
             <div style={{ marginTop: "20px" }}>
               <h4 style={styles.h4}>Manual Entry — Maintenance / Service / Installation</h4>
-              <div style={styles.inputGrid}>
+              <div className="tf-input-grid" style={styles.inputGrid}>
                 {(["Maintenance", "Service", "Installation"] as const).map((name) => (
                   <div key={name} style={{ display: "contents" }}>
                     <NumField label={`${name} Revenue`} val={deptPerformance[name].revenue} onChange={(v) => setDept(name, "revenue", v)} />
@@ -450,7 +450,7 @@ export default function CommandBoard({ savedGoals }: Props) {
         )}
 
         {/* ── Foundry Insight ────────────────────────── */}
-        <section style={{ ...styles.card, marginTop: "24px" }}>
+        <section className="tf-card" style={{ ...styles.card, marginTop: "24px" }}>
           <SectionHead num={pad(foundrySectionNum)} title="Foundry Insight" />
           <p style={styles.insight}>{board.insightText}</p>
           <button
@@ -500,7 +500,7 @@ function ScoreCard({ label, value, main, tip }: { label: string; value: string; 
 }
 
 function InputGrid({ children }: { children: React.ReactNode }) {
-  return <div style={styles.inputGrid}>{children}</div>;
+  return <div className="tf-input-grid" style={styles.inputGrid}>{children}</div>;
 }
 
 function InputField({ label, value, readOnly }: { label: string; value: string; readOnly?: boolean }) {

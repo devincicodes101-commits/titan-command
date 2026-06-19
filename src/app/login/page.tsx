@@ -69,6 +69,9 @@ export default function LoginPage() {
           </button>
         </form>
 
+        <p style={{ ...styles.footer, marginTop: "16px" }}>
+          <Link href="/forgot-password" style={styles.link}>Forgot password?</Link>
+        </p>
         <p style={styles.footer}>
           Don&apos;t have an account?{" "}
           <Link href="/signup" style={styles.link}>Create one</Link>

@@ -12,7 +12,7 @@ export default function TopNav({ tenantName, userEmail }: Props) {
   const path = usePathname();
 
   return (
-    <nav style={styles.nav}>
+    <nav className="tf-nav" style={styles.nav}>
       <div style={styles.brand}>
         <span style={styles.dot} />
         <span style={styles.brandText}>{tenantName}</span>

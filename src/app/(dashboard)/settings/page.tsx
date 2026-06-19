@@ -73,7 +73,7 @@ export default function SettingsPage() {
   if (loading) return <div style={{ padding: "48px", color: "var(--tf-muted)" }}>Loading…</div>;
 
   return (
-    <div style={styles.root}>
+    <div className="tf-root" style={styles.root}>
       <div style={styles.wrap}>
         <div style={styles.pageHeader}>
           <h1 style={styles.title}>Settings</h1>
@@ -82,9 +82,9 @@ export default function SettingsPage() {
 
         <form onSubmit={handleSave}>
           {/* Monthly Goals */}
-          <section style={styles.card}>
+          <section className="tf-card" style={styles.card}>
             <SectionHead num="01" title="Monthly Goals" />
-            <div style={styles.grid4}>
+            <div className="tf-results-grid" style={styles.grid4}>
               <Field label="Monthly Revenue Goal">
                 <input type="number" value={monthlyRevenueGoal} min={0} step={100}
                   onChange={(e) => setMonthlyRevenueGoal(parseFloat(e.target.value) || 0)}
@@ -111,14 +111,14 @@ export default function SettingsPage() {
           </section>
 
           {/* Weekly Goals */}
-          <section style={{ ...styles.card, marginTop: "24px" }}>
+          <section className="tf-card" style={{ ...styles.card, marginTop: "24px" }}>
             <SectionHead num="02" title="Weekly Goals" />
             <p style={styles.hint}>
               Auto-calculated weekly: <strong style={{ color: "var(--tf-orange)" }}>
                 {new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(autoWeekly)}
               </strong>{" "}(monthly ÷ weeks in month). Override below if needed.
             </p>
-            <div style={styles.grid4}>
+            <div className="tf-results-grid" style={styles.grid4}>
               <Field label="Weekly Revenue Goal">
                 <input type="number" value={weeklyRevenueGoal} min={0} step={100}
                   onChange={(e) => setWeeklyRevenueGoal(parseFloat(e.target.value) || 0)}
@@ -134,7 +134,7 @@ export default function SettingsPage() {
 
           {/* Business Units */}
           {units.length > 0 && (
-            <section style={{ ...styles.card, marginTop: "24px" }}>
+            <section className="tf-card" style={{ ...styles.card, marginTop: "24px" }}>
               <SectionHead num="03" title="Business Unit Targets" />
               <div style={styles.tableWrap}>
                 <table style={styles.table}>

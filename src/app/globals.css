@@ -45,3 +45,46 @@ input[type="number"] {
     display: none !important;
   }
 }
+
+/* ── Responsive overrides for the Titan Command Board ─────────────────────
+   Component styles are inline (React.CSSProperties), so these media-query
+   rules use !important to win over them at narrower viewports. */
+
+@media (max-width: 1100px) {
+  .tf-root {
+    padding: 22px !important;
+  }
+  .tf-header {
+    flex-direction: column !important;
+    align-items: flex-start !important;
+  }
+  .tf-scoreboard,
+  .tf-results-grid {
+    grid-template-columns: repeat(2, 1fr) !important;
+  }
+  .tf-two-col {
+    grid-template-columns: 1fr !important;
+  }
+}
+
+@media (max-width: 680px) {
+  .tf-root {
+    padding: 16px !important;
+  }
+  .tf-card {
+    padding: 20px !important;
+  }
+  .tf-scoreboard,
+  .tf-input-grid,
+  .tf-results-grid {
+    grid-template-columns: 1fr !important;
+  }
+  .tf-scoreboard {
+    position: static !important;
+  }
+  .tf-nav {
+    padding: 12px 16px !important;
+    flex-wrap: wrap !important;
+    gap: 10px !important;
+  }
+}
