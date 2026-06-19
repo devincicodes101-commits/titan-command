@@ -33,40 +33,45 @@ export async function POST(req: NextRequest) {
     const tenantId = randomUUID();
     const now = new Date().toISOString();
 
-    await supabase.from("tenants").insert({
+    const { error: tenantErr } = await supabase.from("tenants").insert({
       id: tenantId, name: companyName, slug, trade: "HVAC",
       created_at: now, updated_at: now,
     });
+    if (tenantErr) throw new Error(`tenants insert failed: ${tenantErr.message}`);
 
-    await supabase.from("users").insert({
+    const { error: userErr } = await supabase.from("users").insert({
       id: randomUUID(), tenant_id: tenantId, email,
       password_hash: passwordHash, role: "OWNER",
       created_at: now, updated_at: now,
     });
+    if (userErr) throw new Error(`users insert failed: ${userErr.message}`);
 
-    await supabase.from("tenant_goals").insert({
+    const { error: goalsErr } = await supabase.from("tenant_goals").insert({
       id: randomUUID(), tenant_id: tenantId,
       monthly_revenue_goal: 0, monthly_sold_hour_goal: 0,
       weekly_revenue_goal: 0, weekly_sold_hour_goal: 0,
       working_days_month: 20, created_at: now, updated_at: now,
     });
+    if (goalsErr) throw new Error(`tenant_goals insert failed: ${goalsErr.message}`);
 
-    await supabase.from("crm_credentials").insert({
+    const { error: crmErr } = await supabase.from("crm_credentials").insert({
       id: randomUUID(), tenant_id: tenantId,
       provider: "MANUAL", created_at: now, updated_at: now,
     });
+    if (crmErr) throw new Error(`crm_credentials insert failed: ${crmErr.message}`);
 
-    await supabase.from("business_units").insert([
+    const { error: unitsErr } = await supabase.from("business_units").insert([
       { id: randomUUID(), tenant_id: tenantId, sort_order: 0, name: "Maintenance",     target_close_rate: 65, target_rpl: 454,   includes_install: false, created_at: now, updated_at: now },
       { id: randomUUID(), tenant_id: tenantId, sort_order: 1, name: "Demand Service",  target_close_rate: 50, target_rpl: 1100,  includes_install: false, created_at: now, updated_at: now },
       { id: randomUUID(), tenant_id: tenantId, sort_order: 2, name: "Equipment Sales", target_close_rate: 50, target_rpl: 12000, includes_install: true,  created_at: now, updated_at: now },
     ]);
+    if (unitsErr) throw new Error(`business_units insert failed: ${unitsErr.message}`);
 
     return NextResponse.json({ ok: true });
   } catch (err) {
     console.error(err);
     const message = err instanceof Error ? err.message : String(err);
-    return NextResponse.json({ error: `[v3] Server error: ${message}` }, { status: 500 });
+    return NextResponse.json({ error: `Server error: ${message}` }, { status: 500 });
   }
 }
 

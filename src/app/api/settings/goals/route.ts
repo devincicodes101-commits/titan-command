@@ -33,7 +33,7 @@ export async function POST(req: NextRequest) {
     const now = new Date().toISOString();
     const tid = session.user.tenantId;
 
-    await supabase.from("tenant_goals").upsert({
+    const { error: goalsErr } = await supabase.from("tenant_goals").upsert({
       tenant_id: tid,
       monthly_revenue_goal: goals.monthlyRevenueGoal,
       monthly_sold_hour_goal: goals.monthlySoldHourGoal,
@@ -41,12 +41,16 @@ export async function POST(req: NextRequest) {
       weekly_sold_hour_goal: goals.weeklySoldHourGoal,
       working_days_month: goals.workingDaysMonth,
       updated_at: now,
-    }, { onConflict: "tenant_id" });
+    }, { onConflict: "tenant_id", ignoreDuplicates: false });
+    if (goalsErr) throw new Error(`tenant_goals upsert failed: ${goalsErr.message}`);
 
-    await supabase.from("tenants").update({ trade, updated_at: now }).eq("id", tid);
+    const { error: tenantErr } = await supabase.from("tenants").update({ trade, updated_at: now }).eq("id", tid);
+    if (tenantErr) throw new Error(`tenants update failed: ${tenantErr.message}`);
 
-    await supabase.from("business_units").delete().eq("tenant_id", tid);
-    await supabase.from("business_units").insert(
+    const { error: deleteErr } = await supabase.from("business_units").delete().eq("tenant_id", tid);
+    if (deleteErr) throw new Error(`business_units delete failed: ${deleteErr.message}`);
+
+    const { error: insertErr } = await supabase.from("business_units").insert(
       units.map((u: any, i: number) => ({
         id: randomUUID(),
         tenant_id: tid,
@@ -59,6 +63,7 @@ export async function POST(req: NextRequest) {
         updated_at: now,
       }))
     );
+    if (insertErr) throw new Error(`business_units insert failed: ${insertErr.message}`);
 
     return NextResponse.json({ ok: true });
   } catch (err) {
