@@ -26,6 +26,7 @@ interface SavedGoals {
 
 interface Props {
   savedGoals?: SavedGoals | null;
+  serviceTitanConnected?: boolean;
 }
 
 // ─── Trade → Business Unit names ────────────────────────────────────────────
@@ -89,7 +90,7 @@ function defaultUnits(trade: Trade, saved?: SavedGoals["businessUnits"]): UnitIn
 
 // ─── Component ───────────────────────────────────────────────────────────────
 
-export default function CommandBoard({ savedGoals }: Props) {
+export default function CommandBoard({ savedGoals, serviceTitanConnected }: Props) {
   const today = new Date().toLocaleDateString("en-US", {
     weekday: "long", year: "numeric", month: "long", day: "numeric",
   });
@@ -189,8 +190,10 @@ export default function CommandBoard({ savedGoals }: Props) {
           <div style={styles.statusBox}>
             <span style={styles.kicker}>Status</span>
             <div style={styles.liveRow}>
-              <span style={styles.liveDot} />
-              <span style={styles.liveText}>Titan Daily Command Board</span>
+              <span style={{ ...styles.liveDot, background: serviceTitanConnected ? "var(--tf-green)" : "var(--tf-orange)", boxShadow: serviceTitanConnected ? "0 0 18px rgba(46,204,113,.7)" : "0 0 18px rgba(255,140,0,.7)" }} />
+              <span style={styles.liveText}>
+                {serviceTitanConnected ? "ServiceTitan Connected" : "Titan Daily Command Board"}
+              </span>
             </div>
           </div>
         </div>

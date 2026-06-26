@@ -12,6 +12,8 @@ const TRADE_DISPLAY_MAP: Record<string, Trade> = Object.fromEntries(
 
 interface Unit { name: string; targetCloseRate: number; targetRpl: number; includesInstall: boolean; }
 
+interface STBusinessUnit { id: number; name: string; active: boolean; }
+
 export default function SettingsPage() {
   const [trade, setTrade] = useState<Trade>("HVAC");
   const [monthlyRevenueGoal, setMonthlyRevenueGoal] = useState(0);
@@ -23,6 +25,15 @@ export default function SettingsPage() {
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [loading, setLoading] = useState(true);
+
+  const [stTenantId, setStTenantId] = useState("");
+  const [stAppKey, setStAppKey] = useState("");
+  const [stClientId, setStClientId] = useState("");
+  const [stClientSecret, setStClientSecret] = useState("");
+  const [stConnected, setStConnected] = useState(false);
+  const [stConnecting, setStConnecting] = useState(false);
+  const [stError, setStError] = useState<string | null>(null);
+  const [stBusinessUnits, setStBusinessUnits] = useState<STBusinessUnit[] | null>(null);
 
   useEffect(() => {
     fetch("/api/settings/goals")
@@ -39,7 +50,50 @@ export default function SettingsPage() {
         if (data.units?.length) setUnits(data.units);
         setLoading(false);
       });
+    fetch("/api/settings/crm-credentials")
+      .then((r) => r.json())
+      .then((data) => {
+        const st = data.credentials?.find((c: { provider: string }) => c.provider === "servicetitan");
+        if (st) {
+          setStConnected(st.connected);
+          setStTenantId(st.st_tenant_id ?? "");
+          setStAppKey(st.app_key ?? "");
+        }
+      });
   }, []);
+
+  async function handleConnectServiceTitan(e: React.FormEvent) {
+    e.preventDefault();
+    setStConnecting(true);
+    setStError(null);
+    try {
+      const res = await fetch("/api/settings/crm-credentials", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          stTenantId,
+          appKey: stAppKey,
+          clientId: stClientId,
+          clientSecret: stClientSecret,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setStError(data.error ?? "Connection failed");
+        setStConnected(false);
+        return;
+      }
+      setStConnected(true);
+      setStClientSecret("");
+      const buRes = await fetch("/api/servicetitan/business-units");
+      const buData = await buRes.json();
+      if (buRes.ok) setStBusinessUnits(buData.units);
+    } catch (err) {
+      setStError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setStConnecting(false);
+    }
+  }
 
   const autoWeekly = workingDaysMonth > 0
     ? Math.round(monthlyRevenueGoal / (workingDaysMonth / 5) * 100) / 100
@@ -184,13 +238,58 @@ export default function SettingsPage() {
           </div>
         </form>
 
-        {/* CRM placeholder */}
-        <section style={{ ...styles.card, marginTop: "32px", opacity: 0.6 }}>
-          <SectionHead num="04" title="CRM Integration" />
-          <p style={{ color: "var(--tf-muted)", lineHeight: 1.6, margin: 0 }}>
-            ServiceTitan and Jobber API connections — coming in a future step.
-            Awaiting Reed&apos;s confirmation on: how Today&apos;s Opportunities are counted,
-            exact business unit names inside ServiceTitan, and Jobber department parity.
+        {/* CRM Integration */}
+        <section style={{ ...styles.card, marginTop: "32px" }}>
+          <SectionHead num="04" title="CRM Integration — ServiceTitan" />
+          <p style={{ color: "var(--tf-muted)", fontSize: "13px", marginBottom: "18px" }}>
+            Status:{" "}
+            <strong style={{ color: stConnected ? "var(--tf-green)" : "var(--tf-muted)" }}>
+              {stConnected ? "Connected ✓" : "Not connected"}
+            </strong>
+          </p>
+          <form onSubmit={handleConnectServiceTitan}>
+            <div className="tf-results-grid" style={styles.grid4}>
+              <Field label="ServiceTitan Tenant ID">
+                <input type="text" value={stTenantId} onChange={(e) => setStTenantId(e.target.value)} style={styles.input} />
+              </Field>
+              <Field label="App Key">
+                <input type="text" value={stAppKey} onChange={(e) => setStAppKey(e.target.value)} style={styles.input} />
+              </Field>
+              <Field label="Client ID">
+                <input type="text" value={stClientId} onChange={(e) => setStClientId(e.target.value)} style={styles.input} />
+              </Field>
+              <Field label="Client Secret">
+                <input type="password" value={stClientSecret} placeholder={stConnected ? "•••••••• (saved)" : ""}
+                  onChange={(e) => setStClientSecret(e.target.value)} style={styles.input} />
+              </Field>
+            </div>
+            <div style={{ marginTop: "20px", display: "flex", gap: "16px", alignItems: "center" }}>
+              <button type="submit" disabled={stConnecting} style={styles.saveBtn}>
+                {stConnecting ? "Testing connection…" : "Test & Save Connection"}
+              </button>
+              {stError && <span style={{ color: "var(--tf-red)", fontSize: "13px" }}>{stError}</span>}
+            </div>
+          </form>
+
+          {stBusinessUnits && (
+            <div style={{ marginTop: "24px" }}>
+              <h4 style={{ ...styles.label, color: "var(--tf-orange)", fontSize: "12px", marginBottom: "10px" }}>
+                Live Business Units from ServiceTitan
+              </h4>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: "8px" }}>
+                {stBusinessUnits.map((u) => (
+                  <span key={u.id} style={styles.pill}>{u.name}</span>
+                ))}
+              </div>
+              <p style={{ color: "var(--tf-muted)", fontSize: "12px", marginTop: "10px" }}>
+                Use these exact names in the Business Unit Targets table above so live data lines up correctly.
+              </p>
+            </div>
+          )}
+
+          <p style={{ color: "var(--tf-muted)", fontSize: "12px", marginTop: "18px", lineHeight: 1.5 }}>
+            Business unit names pull live from ServiceTitan once connected. Revenue, sold hours, calls, and
+            opportunity counts are still manual entry while we finish mapping those fields against your account.
           </p>
         </section>
       </div>
@@ -234,4 +333,5 @@ const styles: Record<string, React.CSSProperties> = {
   th: { textAlign: "left", color: "var(--tf-muted)", fontSize: "10px", textTransform: "uppercase", letterSpacing: ".12em", padding: "12px", borderBottom: "1px solid rgba(164,140,122,.22)" },
   td: { padding: "10px 12px", borderBottom: "1px solid rgba(164,140,122,.12)", verticalAlign: "middle" },
   saveBtn: { background: "linear-gradient(135deg,var(--tf-orange-soft),var(--tf-orange))", color: "#2f1500", fontFamily: "'Space Grotesk',Inter,Arial,sans-serif", fontWeight: 900, fontSize: "14px", textTransform: "uppercase", letterSpacing: ".12em", padding: "14px 28px", border: "none", cursor: "pointer", borderRadius: "3px" },
+  pill: { display: "inline-flex", padding: "6px 12px", border: "1px solid rgba(255,140,0,.4)", color: "var(--tf-text)", fontSize: "12px", fontWeight: 700, borderRadius: "3px", background: "rgba(255,140,0,.08)" },
 };

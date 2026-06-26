@@ -15,11 +15,14 @@ export default async function DashboardPage() {
   const tid = session.user.tenantId;
   const supabase = getSupabase();
 
-  const [{ data: goals }, { data: units }, { data: tenant }] = await Promise.all([
+  const [{ data: goals }, { data: units }, { data: tenant }, { data: stCred }] = await Promise.all([
     supabase.from("tenant_goals").select("*").eq("tenant_id", tid).single(),
     supabase.from("business_units").select("*").eq("tenant_id", tid).order("sort_order"),
     supabase.from("tenants").select("trade").eq("id", tid).single(),
+    supabase.from("crm_credentials").select("connected").eq("tenant_id", tid).eq("provider", "servicetitan").single(),
   ]);
+
+  const serviceTitanConnected = stCred?.connected ?? false;
 
   const savedGoals = goals ? {
     monthlyRevenueGoal: goals.monthly_revenue_goal,
@@ -36,5 +39,5 @@ export default async function DashboardPage() {
     })),
   } : null;
 
-  return <CommandBoard savedGoals={savedGoals} />;
+  return <CommandBoard savedGoals={savedGoals} serviceTitanConnected={serviceTitanConnected} />;
 }
