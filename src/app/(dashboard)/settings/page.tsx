@@ -58,6 +58,13 @@ export default function SettingsPage() {
           setStConnected(st.connected);
           setStTenantId(st.st_tenant_id ?? "");
           setStAppKey(st.app_key ?? "");
+          if (st.connected) {
+            fetch("/api/servicetitan/business-units")
+              .then((r) => r.json())
+              .then((buData) => {
+                if (buData.units) setStBusinessUnits(buData.units);
+              });
+          }
         }
       });
   }, []);

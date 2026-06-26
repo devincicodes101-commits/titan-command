@@ -85,3 +85,70 @@ export async function getBusinessUnits(creds: STCredentials): Promise<STBusiness
     active: bu.active,
   }));
 }
+
+// Runs a ServiceTitan pre-built report (Reporting API), paginating until exhausted.
+// Reports return rows as positional arrays matching the `fields` order from the
+// report's metadata — not objects — so callers must index by position.
+async function runReport(
+  creds: STCredentials,
+  category: string,
+  reportId: number,
+  parameters: { name: string; value: unknown }[]
+): Promise<unknown[][]> {
+  const token = await getAccessToken(creds);
+  const rows: unknown[][] = [];
+  let page = 1;
+  let hasMore = true;
+  while (hasMore) {
+    const res = await fetch(
+      `${API_BASE}/reporting/v2/tenant/${creds.stTenantId}/report-category/${category}/reports/${reportId}/data?page=${page}&pageSize=500`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "ST-App-Key": creds.appKey,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ parameters }),
+      }
+    );
+    if (!res.ok) {
+      throw new Error(`ServiceTitan report ${reportId} error (${res.status}): ${await res.text()}`);
+    }
+    const json = await res.json();
+    rows.push(...(json.data ?? []));
+    hasMore = json.hasMore;
+    page += 1;
+  }
+  return rows;
+}
+
+export interface STRevenueSummary {
+  total: number;
+  byBusinessUnit: Record<string, number>;
+}
+
+// "Invoice Summary by Business Unit" (report 3201, accounting category) — ServiceTitan's
+// own accounting report, same numbers Reed would see if he ran it himself. DateType=0
+// filters by Invoice Date. Row shape: [BusinessUnit, Number, Subtotal, DiscountTotal,
+// FeeTotal, Tax, Total, Status, IsPrevailingWageJob].
+export async function getRevenueSummary(
+  creds: STCredentials,
+  from: string,
+  to: string
+): Promise<STRevenueSummary> {
+  const rows = await runReport(creds, "accounting", 3201, [
+    { name: "DateType", value: 0 },
+    { name: "From", value: from },
+    { name: "To", value: to },
+  ]);
+  let total = 0;
+  const byBusinessUnit: Record<string, number> = {};
+  for (const row of rows) {
+    const bu = row[0] as string | null;
+    const invoiceTotal = Number(row[6]) || 0;
+    total += invoiceTotal;
+    if (bu) byBusinessUnit[bu] = (byBusinessUnit[bu] ?? 0) + invoiceTotal;
+  }
+  return { total, byBusinessUnit };
+}

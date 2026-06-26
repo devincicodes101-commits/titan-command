@@ -24,9 +24,16 @@ interface SavedGoals {
   businessUnits: { name: string; targetCloseRate: number; targetRpl: number; includesInstall: boolean }[];
 }
 
+interface LiveRevenue {
+  mtdRevenue: number;
+  wtdRevenue: number;
+  yesterdayRevenue: number;
+}
+
 interface Props {
   savedGoals?: SavedGoals | null;
   serviceTitanConnected?: boolean;
+  liveRevenue?: LiveRevenue | null;
 }
 
 // ─── Trade → Business Unit names ────────────────────────────────────────────
@@ -90,7 +97,7 @@ function defaultUnits(trade: Trade, saved?: SavedGoals["businessUnits"]): UnitIn
 
 // ─── Component ───────────────────────────────────────────────────────────────
 
-export default function CommandBoard({ savedGoals, serviceTitanConnected }: Props) {
+export default function CommandBoard({ savedGoals, serviceTitanConnected, liveRevenue }: Props) {
   const today = new Date().toLocaleDateString("en-US", {
     weekday: "long", year: "numeric", month: "long", day: "numeric",
   });
@@ -104,9 +111,9 @@ export default function CommandBoard({ savedGoals, serviceTitanConnected }: Prop
     weeklyRevenueGoal: savedGoals?.weeklyRevenueGoal ?? 44750,
     weeklySoldHourGoal: savedGoals?.weeklySoldHourGoal ?? 284,
     workingDaysLeftWeek: 2,
-    mtdRevenue: 39000,
-    wtdRevenue: 16000,
-    yesterdayRevenue: 4000,
+    mtdRevenue: liveRevenue?.mtdRevenue ?? 39000,
+    wtdRevenue: liveRevenue?.wtdRevenue ?? 16000,
+    yesterdayRevenue: liveRevenue?.yesterdayRevenue ?? 4000,
     totalMtdCalls: 32,
     mtdSoldHours: 122,
     todayOpportunities: 4,
@@ -243,9 +250,9 @@ export default function CommandBoard({ savedGoals, serviceTitanConnected }: Prop
           <section className="tf-card" style={styles.card}>
             <SectionHead num="02" title="Morning CRM Inputs" />
             <InputGrid>
-              <NumField label="MTD Revenue" val={inputs.mtdRevenue} onChange={(v) => setInput("mtdRevenue", v)} />
-              <NumField label="WTD Revenue" val={inputs.wtdRevenue} onChange={(v) => setInput("wtdRevenue", v)} />
-              <NumField label="Yesterday Revenue" val={inputs.yesterdayRevenue} onChange={(v) => setInput("yesterdayRevenue", v)} />
+              <NumField label={liveRevenue ? "MTD Revenue (Live ⚡)" : "MTD Revenue"} val={inputs.mtdRevenue} onChange={(v) => setInput("mtdRevenue", v)} />
+              <NumField label={liveRevenue ? "WTD Revenue (Live ⚡)" : "WTD Revenue"} val={inputs.wtdRevenue} onChange={(v) => setInput("wtdRevenue", v)} />
+              <NumField label={liveRevenue ? "Yesterday Revenue (Live ⚡)" : "Yesterday Revenue"} val={inputs.yesterdayRevenue} onChange={(v) => setInput("yesterdayRevenue", v)} />
               <NumField label="Total MTD Calls Ran" val={inputs.totalMtdCalls} onChange={(v) => setInput("totalMtdCalls", v)} step={1} />
               <NumField label="MTD Sold Hours" val={inputs.mtdSoldHours} onChange={(v) => setInput("mtdSoldHours", v)} step={0.1} />
               <NumField label="Today's Opportunities" val={inputs.todayOpportunities} onChange={(v) => setInput("todayOpportunities", v)} step={1} />
