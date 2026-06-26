@@ -35,6 +35,7 @@ export default async function DashboardPage() {
   const serviceTitanConnected = stCred?.connected ?? false;
 
   let liveRevenue: { mtdRevenue: number; wtdRevenue: number; yesterdayRevenue: number } | null = null;
+  let liveRevenueError: string | null = null;
   if (serviceTitanConnected && stCred) {
     try {
       const creds = {
@@ -60,8 +61,11 @@ export default async function DashboardPage() {
       ]);
       liveRevenue = { mtdRevenue: mtd.total, wtdRevenue: wtd.total, yesterdayRevenue: yest.total };
     } catch (err) {
-      console.error("ServiceTitan live revenue fetch failed:", err);
+      liveRevenueError = err instanceof Error ? err.message : String(err);
+      console.error("ServiceTitan live revenue fetch failed:", liveRevenueError);
     }
+  } else if (serviceTitanConnected && !stCred) {
+    liveRevenueError = "crm_credentials marked connected but no row was found for this tenant";
   }
 
   const savedGoals = goals ? {
@@ -84,6 +88,7 @@ export default async function DashboardPage() {
       savedGoals={savedGoals}
       serviceTitanConnected={serviceTitanConnected}
       liveRevenue={liveRevenue}
+      liveRevenueError={liveRevenueError}
     />
   );
 }

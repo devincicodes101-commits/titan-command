@@ -34,6 +34,7 @@ interface Props {
   savedGoals?: SavedGoals | null;
   serviceTitanConnected?: boolean;
   liveRevenue?: LiveRevenue | null;
+  liveRevenueError?: string | null;
 }
 
 // ─── Trade → Business Unit names ────────────────────────────────────────────
@@ -97,7 +98,7 @@ function defaultUnits(trade: Trade, saved?: SavedGoals["businessUnits"]): UnitIn
 
 // ─── Component ───────────────────────────────────────────────────────────────
 
-export default function CommandBoard({ savedGoals, serviceTitanConnected, liveRevenue }: Props) {
+export default function CommandBoard({ savedGoals, serviceTitanConnected, liveRevenue, liveRevenueError }: Props) {
   const today = new Date().toLocaleDateString("en-US", {
     weekday: "long", year: "numeric", month: "long", day: "numeric",
   });
@@ -249,6 +250,11 @@ export default function CommandBoard({ savedGoals, serviceTitanConnected, liveRe
 
           <section className="tf-card" style={styles.card}>
             <SectionHead num="02" title="Morning CRM Inputs" />
+            {liveRevenueError && (
+              <p style={{ color: "var(--tf-red)", fontSize: "12px", marginTop: "-12px", marginBottom: "16px" }}>
+                ServiceTitan live pull failed: {liveRevenueError}
+              </p>
+            )}
             <InputGrid>
               <NumField label={liveRevenue ? "MTD Revenue (Live ⚡)" : "MTD Revenue"} val={inputs.mtdRevenue} onChange={(v) => setInput("mtdRevenue", v)} />
               <NumField label={liveRevenue ? "WTD Revenue (Live ⚡)" : "WTD Revenue"} val={inputs.wtdRevenue} onChange={(v) => setInput("wtdRevenue", v)} />
