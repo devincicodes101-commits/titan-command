@@ -105,13 +105,19 @@ export default function CommandBoard({ savedGoals, serviceTitanConnected, liveRe
   });
 
   const [trade, setTrade] = useState<Trade>(savedGoals?.trade ?? "HVAC");
+  const monthlyRevenueGoalInit = savedGoals?.monthlyRevenueGoal ?? 179000;
+  const monthlySoldHourGoalInit = savedGoals?.monthlySoldHourGoal ?? 1134;
+  const workingDaysMonthInit = savedGoals?.workingDaysMonth ?? 20;
+  const weeksInMonth = workingDaysMonthInit / 5;
+  // Per spec, weekly goals derive from the monthly goal — only treat a saved
+  // weekly value as a deliberate override when it's actually non-zero.
   const [inputs, setInputs] = useState<BoardInputs>({
-    monthlyRevenueGoal: savedGoals?.monthlyRevenueGoal ?? 179000,
-    monthlySoldHourGoal: savedGoals?.monthlySoldHourGoal ?? 1134,
-    workingDaysMonth: savedGoals?.workingDaysMonth ?? 20,
+    monthlyRevenueGoal: monthlyRevenueGoalInit,
+    monthlySoldHourGoal: monthlySoldHourGoalInit,
+    workingDaysMonth: workingDaysMonthInit,
     workingDaysLeftMonth: 16,
-    weeklyRevenueGoal: savedGoals?.weeklyRevenueGoal ?? 44750,
-    weeklySoldHourGoal: savedGoals?.weeklySoldHourGoal ?? 284,
+    weeklyRevenueGoal: savedGoals?.weeklyRevenueGoal || Math.round(monthlyRevenueGoalInit / weeksInMonth),
+    weeklySoldHourGoal: savedGoals?.weeklySoldHourGoal || Math.round(monthlySoldHourGoalInit / weeksInMonth),
     workingDaysLeftWeek: 2,
     mtdRevenue: liveRevenue?.mtdRevenue ?? 39000,
     wtdRevenue: liveRevenue?.wtdRevenue ?? 16000,
