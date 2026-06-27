@@ -1,6 +1,6 @@
 import { auth } from "@/auth";
 import { getSupabase } from "@/lib/supabase";
-import { getRevenueSummary } from "@/lib/servicetitan";
+import { getRevenueSummary, getBusinessUnits, getDepartmentPerformance } from "@/lib/servicetitan";
 import CommandBoard from "@/components/CommandBoard";
 
 function isoDate(d: Date): string {
@@ -36,6 +36,7 @@ export default async function DashboardPage() {
 
   let liveRevenue: { mtdRevenue: number; wtdRevenue: number; yesterdayRevenue: number } | null = null;
   let liveRevenueError: string | null = null;
+  let liveDeptPerformance: Record<string, { revenue: number; jobsCompleted: number }> | null = null;
   if (serviceTitanConnected && stCred) {
     try {
       const creds = {
@@ -54,12 +55,33 @@ export default async function DashboardPage() {
       yesterday.setDate(now.getDate() - 1);
       const yesterdayStr = isoDate(yesterday);
 
-      const [mtd, wtd, yest] = await Promise.all([
+      const [mtd, wtd, yest, businessUnits] = await Promise.all([
         getRevenueSummary(creds, firstOfMonth, today),
         getRevenueSummary(creds, weekStart, today),
         getRevenueSummary(creds, yesterdayStr, yesterdayStr),
+        getBusinessUnits(creds),
       ]);
       liveRevenue = { mtdRevenue: mtd.total, wtdRevenue: wtd.total, yesterdayRevenue: yest.total };
+
+      // Map real ServiceTitan business units onto the dashboard's 3 manual-entry
+      // department cards by name keyword — works for the "HVAC - X" naming
+      // convention seen on Reed's account; may need adjusting for other tenants.
+      const findUnit = (keyword: string) =>
+        businessUnits.find((u) => u.name.toLowerCase().includes(keyword));
+      const maintenanceUnit = findUnit("maintenance");
+      const serviceUnit = findUnit("service");
+      const installUnit = findUnit("install");
+      const deptUnits = [maintenanceUnit, serviceUnit, installUnit].filter(
+        (u): u is { id: number; name: string; active: boolean } => Boolean(u)
+      );
+
+      if (deptUnits.length > 0) {
+        const perf = await getDepartmentPerformance(creds, deptUnits, firstOfMonth, today);
+        liveDeptPerformance = {};
+        if (maintenanceUnit) liveDeptPerformance.Maintenance = perf[maintenanceUnit.name];
+        if (serviceUnit) liveDeptPerformance.Service = perf[serviceUnit.name];
+        if (installUnit) liveDeptPerformance.Installation = perf[installUnit.name];
+      }
     } catch (err) {
       liveRevenueError = err instanceof Error ? err.message : String(err);
       console.error("ServiceTitan live revenue fetch failed:", liveRevenueError);
@@ -89,6 +111,7 @@ export default async function DashboardPage() {
       serviceTitanConnected={serviceTitanConnected}
       liveRevenue={liveRevenue}
       liveRevenueError={liveRevenueError}
+      liveDeptPerformance={liveDeptPerformance}
     />
   );
 }

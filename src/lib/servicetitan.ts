@@ -150,5 +150,48 @@ export async function getRevenueSummary(
     total += invoiceTotal;
     if (bu) byBusinessUnit[bu] = (byBusinessUnit[bu] ?? 0) + invoiceTotal;
   }
-  return { total, byBusinessUnit };
+  const round2 = (n: number) => Math.round(n * 100) / 100;
+  for (const bu in byBusinessUnit) byBusinessUnit[bu] = round2(byBusinessUnit[bu]);
+  return { total: round2(total), byBusinessUnit };
+}
+
+// Counts completed jobs for one business unit using the API's own totalCount,
+// rather than paginating every job just to count them.
+export async function getCompletedJobsCount(
+  creds: STCredentials,
+  businessUnitId: number,
+  completedOnOrAfter: string
+): Promise<number> {
+  const data = await stFetch(
+    creds,
+    `/jpm/v2/tenant/${creds.stTenantId}/jobs?businessUnitId=${businessUnitId}&jobStatus=Completed&completedOnOrAfter=${completedOnOrAfter}T00:00:00Z&pageSize=1&includeTotal=true`
+  );
+  return data.totalCount ?? 0;
+}
+
+export interface STDepartmentPerformance {
+  revenue: number;
+  jobsCompleted: number;
+}
+
+// Combines revenue-by-business-unit with a completed-jobs count per unit, for the
+// 4-category HVAC dashboard (Maintenance/Service/Installation cards).
+export async function getDepartmentPerformance(
+  creds: STCredentials,
+  businessUnits: { id: number; name: string }[],
+  from: string,
+  to: string
+): Promise<Record<string, STDepartmentPerformance>> {
+  const revenue = await getRevenueSummary(creds, from, to);
+  const result: Record<string, STDepartmentPerformance> = {};
+  await Promise.all(
+    businessUnits.map(async (bu) => {
+      const jobsCompleted = await getCompletedJobsCount(creds, bu.id, from);
+      result[bu.name] = {
+        revenue: revenue.byBusinessUnit[bu.name] ?? 0,
+        jobsCompleted,
+      };
+    })
+  );
+  return result;
 }

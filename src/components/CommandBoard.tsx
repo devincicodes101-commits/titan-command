@@ -35,6 +35,7 @@ interface Props {
   serviceTitanConnected?: boolean;
   liveRevenue?: LiveRevenue | null;
   liveRevenueError?: string | null;
+  liveDeptPerformance?: Record<string, { revenue: number; jobsCompleted: number }> | null;
 }
 
 // ─── Trade → Business Unit names ────────────────────────────────────────────
@@ -98,7 +99,7 @@ function defaultUnits(trade: Trade, saved?: SavedGoals["businessUnits"]): UnitIn
 
 // ─── Component ───────────────────────────────────────────────────────────────
 
-export default function CommandBoard({ savedGoals, serviceTitanConnected, liveRevenue, liveRevenueError }: Props) {
+export default function CommandBoard({ savedGoals, serviceTitanConnected, liveRevenue, liveRevenueError, liveDeptPerformance }: Props) {
   const today = new Date().toLocaleDateString("en-US", {
     weekday: "long", year: "numeric", month: "long", day: "numeric",
   });
@@ -130,9 +131,9 @@ export default function CommandBoard({ savedGoals, serviceTitanConnected, liveRe
   );
 
   const [deptPerformance, setDeptPerformance] = useState<Record<string, { revenue: number; jobsCompleted: number }>>({
-    Maintenance: { revenue: 0, jobsCompleted: 0 },
-    Service: { revenue: 0, jobsCompleted: 0 },
-    Installation: { revenue: 0, jobsCompleted: 0 },
+    Maintenance: liveDeptPerformance?.Maintenance ?? { revenue: 0, jobsCompleted: 0 },
+    Service: liveDeptPerformance?.Service ?? { revenue: 0, jobsCompleted: 0 },
+    Installation: liveDeptPerformance?.Installation ?? { revenue: 0, jobsCompleted: 0 },
   });
 
   // Re-map unit names when trade changes (but keep numeric values)
@@ -451,7 +452,7 @@ export default function CommandBoard({ savedGoals, serviceTitanConnected, liveRe
               })}
             </div>
             <div style={{ marginTop: "20px" }}>
-              <h4 style={styles.h4}>Manual Entry — Maintenance / Service / Installation</h4>
+              <h4 style={styles.h4}>{liveDeptPerformance ? "Maintenance / Service / Installation (Live ⚡, editable)" : "Manual Entry — Maintenance / Service / Installation"}</h4>
               <div className="tf-input-grid" style={styles.inputGrid}>
                 {(["Maintenance", "Service", "Installation"] as const).map((name) => (
                   <div key={name} style={{ display: "contents" }}>
@@ -460,7 +461,11 @@ export default function CommandBoard({ savedGoals, serviceTitanConnected, liveRe
                   </div>
                 ))}
               </div>
-              <p style={styles.note}>Sales figures above are pulled automatically from the Equipment Sales row in the Business Unit Scoreboard. Maintenance, Service, and Installation are manual entry until the ServiceTitan connection is built.</p>
+              <p style={styles.note}>
+                {liveDeptPerformance
+                  ? "Sales, Maintenance, Service, and Installation all pull live from ServiceTitan (matched by business unit name) — still fully editable if you need to override."
+                  : "Sales figures above are pulled automatically from the Equipment Sales row in the Business Unit Scoreboard. Maintenance, Service, and Installation are manual entry until the ServiceTitan connection is built."}
+              </p>
             </div>
           </section>
         )}
