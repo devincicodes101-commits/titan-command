@@ -128,10 +128,17 @@ export interface STRevenueSummary {
   byBusinessUnit: Record<string, number>;
 }
 
-// "Invoice Summary by Business Unit" (report 3201, accounting category) — ServiceTitan's
-// own accounting report, same numbers Reed would see if he ran it himself. DateType=0
-// filters by Invoice Date. Row shape: [BusinessUnit, Number, Subtotal, DiscountTotal,
-// FeeTotal, Tax, Total, Status, IsPrevailingWageJob].
+const round2 = (n: number) => Math.round(n * 100) / 100;
+
+// "Invoice Summary by Business Unit" (report 3201, accounting category). IMPORTANT:
+// this report can only show invoices that have a Business Unit assigned -- any
+// invoice without one is silently dropped, even if it has real revenue. Verified
+// against this account: it undercounted June revenue by ~$28,640 across 71 real
+// invoices missing a clean BU tag. So `byBusinessUnit` here is reliable for the
+// per-department breakdown, but `total` must NOT be used as the company-wide
+// revenue figure -- use getTotalRevenue() for that instead.
+// Row shape: [BusinessUnit, Number, Subtotal, DiscountTotal, FeeTotal, Tax, Total,
+// Status, IsPrevailingWageJob].
 export async function getRevenueSummary(
   creds: STCredentials,
   from: string,
@@ -150,9 +157,29 @@ export async function getRevenueSummary(
     total += invoiceTotal;
     if (bu) byBusinessUnit[bu] = (byBusinessUnit[bu] ?? 0) + invoiceTotal;
   }
-  const round2 = (n: number) => Math.round(n * 100) / 100;
   for (const bu in byBusinessUnit) byBusinessUnit[bu] = round2(byBusinessUnit[bu]);
   return { total: round2(total), byBusinessUnit };
+}
+
+// "Invoice Detail by Date" (report 363, accounting category) — unlike report 3201,
+// this includes every invoice regardless of whether it has a Business Unit assigned,
+// so it's the correct source for a true company-wide revenue total. It has no
+// business-unit column at all, so it can't provide a per-unit breakdown.
+// Row shape: [InvoiceDate, Number, CustomerName, LocationAddress, LocationCity,
+// LocationState, LocationZip, JobType, Zone, Subtotal, Tax, Total, IsPrevailingWageJob].
+export async function getTotalRevenue(
+  creds: STCredentials,
+  from: string,
+  to: string
+): Promise<number> {
+  const rows = await runReport(creds, "accounting", 363, [
+    { name: "DateType", value: 0 },
+    { name: "From", value: from },
+    { name: "To", value: to },
+  ]);
+  let total = 0;
+  for (const row of rows) total += Number(row[11]) || 0;
+  return round2(total);
 }
 
 // Counts completed jobs for one business unit using the API's own totalCount,

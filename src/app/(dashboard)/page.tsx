@@ -1,6 +1,6 @@
 import { auth } from "@/auth";
 import { getSupabase } from "@/lib/supabase";
-import { getRevenueSummary, getBusinessUnits, getDepartmentPerformance } from "@/lib/servicetitan";
+import { getTotalRevenue, getBusinessUnits, getDepartmentPerformance } from "@/lib/servicetitan";
 import CommandBoard from "@/components/CommandBoard";
 
 function isoDate(d: Date): string {
@@ -55,13 +55,16 @@ export default async function DashboardPage() {
       yesterday.setDate(now.getDate() - 1);
       const yesterdayStr = isoDate(yesterday);
 
-      const [mtd, wtd, yest, businessUnits] = await Promise.all([
-        getRevenueSummary(creds, firstOfMonth, today),
-        getRevenueSummary(creds, weekStart, today),
-        getRevenueSummary(creds, yesterdayStr, yesterdayStr),
+      // Use getTotalRevenue (report 363) for the company-wide figures -- report 3201
+      // (used below for the per-department breakdown) silently drops any invoice
+      // without a Business Unit assigned, which undercounted real revenue here.
+      const [mtdTotal, wtdTotal, yesterdayTotal, businessUnits] = await Promise.all([
+        getTotalRevenue(creds, firstOfMonth, today),
+        getTotalRevenue(creds, weekStart, today),
+        getTotalRevenue(creds, yesterdayStr, yesterdayStr),
         getBusinessUnits(creds),
       ]);
-      liveRevenue = { mtdRevenue: mtd.total, wtdRevenue: wtd.total, yesterdayRevenue: yest.total };
+      liveRevenue = { mtdRevenue: mtdTotal, wtdRevenue: wtdTotal, yesterdayRevenue: yesterdayTotal };
 
       // Map real ServiceTitan business units onto the dashboard's 3 manual-entry
       // department cards by name keyword — works for the "HVAC - X" naming
