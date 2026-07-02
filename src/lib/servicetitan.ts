@@ -201,6 +201,87 @@ export interface STDepartmentPerformance {
   jobsCompleted: number;
 }
 
+export interface STCloseRateByBU {
+  closeRate: number;
+  mtdSales: number;
+  closedJobs: number;
+}
+
+// Total inbound call count for the period — used for Calls Ran in Section 02.
+export async function getCallsRan(
+  creds: STCredentials,
+  from: string,
+  to: string
+): Promise<number> {
+  const data = await stFetch(
+    creds,
+    `/telecom/v2/tenant/${creds.stTenantId}/calls?createdOnOrAfter=${from}T00:00:00Z&createdOnOrBefore=${to}T23:59:59Z&pageSize=1&includeTotal=true`
+  );
+  return data.totalCount ?? 0;
+}
+
+// Paginates all estimates for the period, groups by business unit name, and
+// returns close rate (Sold / (Sold + Dismissed)), MTD sales dollars, and closed
+// job count per BU — used to pre-fill the Business Unit Scoreboard.
+export async function getCloseRateByBU(
+  creds: STCredentials,
+  from: string,
+  to: string
+): Promise<Record<string, STCloseRateByBU>> {
+  const token = await getAccessToken(creds);
+  const estimates: Record<string, unknown>[] = [];
+  let page = 1;
+  let hasMore = true;
+  while (hasMore) {
+    const res = await fetch(
+      `${API_BASE}/sales/v2/tenant/${creds.stTenantId}/estimates?createdOnOrAfter=${from}T00:00:00Z&pageSize=500&page=${page}`,
+      { headers: { Authorization: `Bearer ${token}`, "ST-App-Key": creds.appKey } }
+    );
+    if (!res.ok) throw new Error(`Estimates fetch error (${res.status}): ${await res.text()}`);
+    const json = await res.json();
+    estimates.push(...(json.data ?? []));
+    hasMore = json.hasMore ?? false;
+    page++;
+  }
+
+  const byBU: Record<string, { sold: number; dismissed: number; subtotal: number }> = {};
+  for (const est of estimates) {
+    const bu = est.businessUnitName as string | null;
+    if (!bu) continue;
+    if (!byBU[bu]) byBU[bu] = { sold: 0, dismissed: 0, subtotal: 0 };
+    const status = (est.status as { name?: string } | null)?.name;
+    if (status === "Sold") {
+      byBU[bu].sold++;
+      byBU[bu].subtotal += Number(est.subtotal) || 0;
+    } else if (status === "Dismissed") {
+      byBU[bu].dismissed++;
+    }
+  }
+
+  const result: Record<string, STCloseRateByBU> = {};
+  for (const [bu, counts] of Object.entries(byBU)) {
+    const total = counts.sold + counts.dismissed;
+    result[bu] = {
+      closeRate: total > 0 ? round2((counts.sold / total) * 100) : 0,
+      mtdSales: round2(counts.subtotal),
+      closedJobs: counts.sold,
+    };
+  }
+  return result;
+}
+
+// Count of active technicians in a given business unit — used for Install Crews.
+export async function getInstallCrewCount(
+  creds: STCredentials,
+  installBuId: number
+): Promise<number> {
+  const data = await stFetch(
+    creds,
+    `/settings/v2/tenant/${creds.stTenantId}/technicians?businessUnitId=${installBuId}&active=true&pageSize=1&includeTotal=true`
+  );
+  return data.totalCount ?? 0;
+}
+
 // Combines revenue-by-business-unit with a completed-jobs count per unit, for the
 // 4-category HVAC dashboard (Maintenance/Service/Installation cards).
 export async function getDepartmentPerformance(

@@ -1,5 +1,6 @@
 "use client";
 import { useState, useEffect, useCallback } from "react";
+import type { STCloseRateByBU } from "@/lib/servicetitan";
 import {
   calculateBoard,
   calculateUnit,
@@ -36,6 +37,9 @@ interface Props {
   liveRevenue?: LiveRevenue | null;
   liveRevenueError?: string | null;
   liveDeptPerformance?: Record<string, { revenue: number; jobsCompleted: number }> | null;
+  liveCallsRan?: number | null;
+  liveCloseRateByBU?: Record<string, STCloseRateByBU> | null;
+  liveInstallCrewCount?: number | null;
 }
 
 // ─── Trade → Business Unit names ────────────────────────────────────────────
@@ -99,7 +103,7 @@ function defaultUnits(trade: Trade, saved?: SavedGoals["businessUnits"]): UnitIn
 
 // ─── Component ───────────────────────────────────────────────────────────────
 
-export default function CommandBoard({ savedGoals, serviceTitanConnected, liveRevenue, liveRevenueError, liveDeptPerformance }: Props) {
+export default function CommandBoard({ savedGoals, serviceTitanConnected, liveRevenue, liveRevenueError, liveDeptPerformance, liveCallsRan, liveCloseRateByBU, liveInstallCrewCount }: Props) {
   const today = new Date().toLocaleDateString("en-US", {
     weekday: "long", year: "numeric", month: "long", day: "numeric",
   });
@@ -122,19 +126,32 @@ export default function CommandBoard({ savedGoals, serviceTitanConnected, liveRe
     mtdRevenue: liveRevenue?.mtdRevenue ?? 39000,
     wtdRevenue: liveRevenue?.wtdRevenue ?? 16000,
     yesterdayRevenue: liveRevenue?.yesterdayRevenue ?? 4000,
-    totalMtdCalls: 32,
+    totalMtdCalls: liveCallsRan ?? 32,
     mtdSoldHours: 122,
     todayOpportunities: 4,
     techsAvailableToday: 5,
     avgSoldHoursPerTech: 5,
-    installCrews: 2,
-    installRevenue: 25000,
+    installCrews: liveInstallCrewCount ?? 2,
+    installRevenue: liveDeptPerformance?.Installation?.revenue ?? 25000,
     daysBookedOut: 7,
     equipmentSalesRevenue: 39016,
   });
-  const [units, setUnits] = useState<UnitInputs[]>(() =>
-    defaultUnits(trade, savedGoals?.businessUnits)
-  );
+  const [units, setUnits] = useState<UnitInputs[]>(() => {
+    const base = defaultUnits(trade, savedGoals?.businessUnits);
+    if (!liveCloseRateByBU) return base;
+    return base.map((unit) => {
+      const n = unit.name.toLowerCase();
+      let match: STCloseRateByBU | null = null;
+      for (const [buName, data] of Object.entries(liveCloseRateByBU)) {
+        const bn = buName.toLowerCase();
+        if (n.includes("maintenance") && bn.includes("maintenance")) { match = data; break; }
+        if ((n.includes("service") || n.includes("demand")) && bn.includes("service") && !bn.includes("maintenance")) { match = data; break; }
+        if ((n.includes("sales") || unit.includesInstall) && bn.includes("sales")) { match = data; break; }
+      }
+      if (!match) return unit;
+      return { ...unit, actualCloseRate: match.closeRate, mtdSales: match.mtdSales };
+    });
+  });
 
   const [deptPerformance, setDeptPerformance] = useState<Record<string, { revenue: number; jobsCompleted: number }>>({
     Maintenance: liveDeptPerformance?.Maintenance ?? { revenue: 0, jobsCompleted: 0 },
@@ -266,7 +283,7 @@ export default function CommandBoard({ savedGoals, serviceTitanConnected, liveRe
               <NumField label={liveRevenue ? "MTD Revenue (Live ⚡)" : "MTD Revenue"} val={inputs.mtdRevenue} onChange={(v) => setInput("mtdRevenue", v)} />
               <NumField label={liveRevenue ? "WTD Revenue (Live ⚡)" : "WTD Revenue"} val={inputs.wtdRevenue} onChange={(v) => setInput("wtdRevenue", v)} />
               <NumField label={liveRevenue ? "Yesterday Revenue (Live ⚡)" : "Yesterday Revenue"} val={inputs.yesterdayRevenue} onChange={(v) => setInput("yesterdayRevenue", v)} />
-              <NumField label="Total MTD Calls Ran" val={inputs.totalMtdCalls} onChange={(v) => setInput("totalMtdCalls", v)} step={1} />
+              <NumField label={liveCallsRan != null ? "Total MTD Calls Ran (Live ⚡)" : "Total MTD Calls Ran"} val={inputs.totalMtdCalls} onChange={(v) => setInput("totalMtdCalls", v)} step={1} />
               <NumField label="MTD Sold Hours" val={inputs.mtdSoldHours} onChange={(v) => setInput("mtdSoldHours", v)} step={0.1} />
               <NumField label="Today's Opportunities" val={inputs.todayOpportunities} onChange={(v) => setInput("todayOpportunities", v)} step={1} />
               <NumField label="Techs Available Today" val={inputs.techsAvailableToday} onChange={(v) => setInput("techsAvailableToday", v)} step={1} />
@@ -431,8 +448,8 @@ export default function CommandBoard({ savedGoals, serviceTitanConnected, liveRe
               <div style={styles.card2}>
                 <h4 style={styles.h4}>Install Operations Inputs</h4>
                 <InputGrid>
-                  <NumField label="Install Crews Working Today" val={inputs.installCrews ?? 2} onChange={(v) => setInput("installCrews", v)} step={1} />
-                  <NumField label="MTD Invoiced Install Revenue" val={inputs.installRevenue ?? 25000} onChange={(v) => setInput("installRevenue", v)} />
+                  <NumField label={liveInstallCrewCount != null ? "Install Crews Working Today (Live ⚡)" : "Install Crews Working Today"} val={inputs.installCrews ?? 2} onChange={(v) => setInput("installCrews", v)} step={1} />
+                  <NumField label={liveDeptPerformance?.Installation ? "MTD Invoiced Install Revenue (Live ⚡)" : "MTD Invoiced Install Revenue"} val={inputs.installRevenue ?? 25000} onChange={(v) => setInput("installRevenue", v)} />
                   <NumField label="Days Booked Out" val={inputs.daysBookedOut ?? 7} onChange={(v) => setInput("daysBookedOut", v)} step={1} />
                   <NumField label="MTD Equipment Sales Revenue" val={inputs.equipmentSalesRevenue ?? 39016} onChange={(v) => setInput("equipmentSalesRevenue", v)} />
                 </InputGrid>

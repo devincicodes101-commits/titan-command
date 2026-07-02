@@ -1,6 +1,6 @@
 import { auth } from "@/auth";
 import { getSupabase } from "@/lib/supabase";
-import { getTotalRevenue, getBusinessUnits, getDepartmentPerformance } from "@/lib/servicetitan";
+import { getTotalRevenue, getBusinessUnits, getDepartmentPerformance, getCallsRan, getCloseRateByBU, getInstallCrewCount, type STCloseRateByBU } from "@/lib/servicetitan";
 import CommandBoard from "@/components/CommandBoard";
 
 function isoDate(d: Date): string {
@@ -37,6 +37,10 @@ export default async function DashboardPage() {
   let liveRevenue: { mtdRevenue: number; wtdRevenue: number; yesterdayRevenue: number } | null = null;
   let liveRevenueError: string | null = null;
   let liveDeptPerformance: Record<string, { revenue: number; jobsCompleted: number }> | null = null;
+  let liveCallsRan: number | null = null;
+  let liveCloseRateByBU: Record<string, STCloseRateByBU> | null = null;
+  let liveInstallCrewCount: number | null = null;
+
   if (serviceTitanConnected && stCred) {
     try {
       const creds = {
@@ -58,13 +62,17 @@ export default async function DashboardPage() {
       // Use getTotalRevenue (report 363) for the company-wide figures -- report 3201
       // (used below for the per-department breakdown) silently drops any invoice
       // without a Business Unit assigned, which undercounted real revenue here.
-      const [mtdTotal, wtdTotal, yesterdayTotal, businessUnits] = await Promise.all([
+      const [mtdTotal, wtdTotal, yesterdayTotal, businessUnits, callsRan, closeRateByBU] = await Promise.all([
         getTotalRevenue(creds, firstOfMonth, today),
         getTotalRevenue(creds, weekStart, today),
         getTotalRevenue(creds, yesterdayStr, yesterdayStr),
         getBusinessUnits(creds),
+        getCallsRan(creds, firstOfMonth, today),
+        getCloseRateByBU(creds, firstOfMonth, today),
       ]);
       liveRevenue = { mtdRevenue: mtdTotal, wtdRevenue: wtdTotal, yesterdayRevenue: yesterdayTotal };
+      liveCallsRan = callsRan;
+      liveCloseRateByBU = closeRateByBU;
 
       // Map real ServiceTitan business units onto the dashboard's 3 manual-entry
       // department cards by name keyword — works for the "HVAC - X" naming
@@ -79,15 +87,19 @@ export default async function DashboardPage() {
       );
 
       if (deptUnits.length > 0) {
-        const perf = await getDepartmentPerformance(creds, deptUnits, firstOfMonth, today);
+        const [perf, crewCount] = await Promise.all([
+          getDepartmentPerformance(creds, deptUnits, firstOfMonth, today),
+          installUnit ? getInstallCrewCount(creds, installUnit.id) : Promise.resolve(0),
+        ]);
         liveDeptPerformance = {};
         if (maintenanceUnit) liveDeptPerformance.Maintenance = perf[maintenanceUnit.name];
         if (serviceUnit) liveDeptPerformance.Service = perf[serviceUnit.name];
         if (installUnit) liveDeptPerformance.Installation = perf[installUnit.name];
+        liveInstallCrewCount = crewCount;
       }
     } catch (err) {
       liveRevenueError = err instanceof Error ? err.message : String(err);
-      console.error("ServiceTitan live revenue fetch failed:", liveRevenueError);
+      console.error("ServiceTitan live data fetch failed:", liveRevenueError);
     }
   } else if (serviceTitanConnected && !stCred) {
     liveRevenueError = "crm_credentials marked connected but no row was found for this tenant";
@@ -115,6 +127,9 @@ export default async function DashboardPage() {
       liveRevenue={liveRevenue}
       liveRevenueError={liveRevenueError}
       liveDeptPerformance={liveDeptPerformance}
+      liveCallsRan={liveCallsRan}
+      liveCloseRateByBU={liveCloseRateByBU}
+      liveInstallCrewCount={liveInstallCrewCount}
     />
   );
 }
