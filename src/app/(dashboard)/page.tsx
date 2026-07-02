@@ -1,11 +1,7 @@
 import { auth } from "@/auth";
 import { getSupabase } from "@/lib/supabase";
-import { getTotalRevenue, getBusinessUnits, getDepartmentPerformance, getCallsRan, getCloseRateByBU, getInstallCrewCount, type STCloseRateByBU } from "@/lib/servicetitan";
+import type { STCloseRateByBU } from "@/lib/servicetitan";
 import CommandBoard from "@/components/CommandBoard";
-
-function isoDate(d: Date): string {
-  return d.toISOString().slice(0, 10);
-}
 
 const TRADE_MAP: Record<string, string> = {
   HVAC: "HVAC", PLUMBING: "Plumbing", ELECTRICAL: "Electrical",
@@ -20,117 +16,79 @@ export default async function DashboardPage() {
   const tid = session.user.tenantId;
   const supabase = getSupabase();
 
-  const [{ data: goals }, { data: units }, { data: tenant }, { data: stCred }] = await Promise.all([
-    supabase.from("tenant_goals").select("*").eq("tenant_id", tid).single(),
-    supabase.from("business_units").select("*").eq("tenant_id", tid).order("sort_order"),
-    supabase.from("tenants").select("trade").eq("id", tid).single(),
-    supabase
-      .from("crm_credentials")
-      .select("st_tenant_id, app_key, client_id, client_secret_encrypted, connected")
-      .eq("tenant_id", tid)
-      .eq("provider", "servicetitan")
-      .single(),
-  ]);
+  const [{ data: goals }, { data: units }, { data: tenant }, { data: stCred }, { data: stCache }] =
+    await Promise.all([
+      supabase.from("tenant_goals").select("*").eq("tenant_id", tid).single(),
+      supabase.from("business_units").select("*").eq("tenant_id", tid).order("sort_order"),
+      supabase.from("tenants").select("trade").eq("id", tid).single(),
+      supabase
+        .from("crm_credentials")
+        .select("connected")
+        .eq("tenant_id", tid)
+        .eq("provider", "servicetitan")
+        .single(),
+      supabase
+        .from("st_cache")
+        .select("data, refreshed_at")
+        .eq("tenant_id", tid)
+        .single(),
+    ]);
 
   const serviceTitanConnected = stCred?.connected ?? false;
 
-  let liveRevenue: { mtdRevenue: number; wtdRevenue: number; yesterdayRevenue: number } | null = null;
-  let liveRevenueError: string | null = null;
-  let liveDeptPerformance: Record<string, { revenue: number; jobsCompleted: number }> | null = null;
-  let liveCallsRan: number | null = null;
-  let liveCloseRateByBU: Record<string, STCloseRateByBU> | null = null;
-  let liveInstallCrewCount: number | null = null;
+  type CacheData = {
+    mtdRevenue: number;
+    wtdRevenue: number;
+    yesterdayRevenue: number;
+    callsRan: number;
+    closeRateByBU: Record<string, STCloseRateByBU>;
+    deptPerformance: Record<string, { revenue: number; jobsCompleted: number } | null>;
+    installCrewCount: number;
+  };
 
-  if (serviceTitanConnected && stCred) {
-    try {
-      const creds = {
-        stTenantId: stCred.st_tenant_id,
-        appKey: stCred.app_key,
-        clientId: stCred.client_id,
-        clientSecretEncrypted: stCred.client_secret_encrypted,
-      };
-      const now = new Date();
-      const today = isoDate(now);
-      const firstOfMonth = isoDate(new Date(now.getFullYear(), now.getMonth(), 1));
-      const monday = new Date(now);
-      monday.setDate(now.getDate() - ((now.getDay() + 6) % 7));
-      const weekStart = isoDate(monday);
-      const yesterday = new Date(now);
-      yesterday.setDate(now.getDate() - 1);
-      const yesterdayStr = isoDate(yesterday);
+  const cached = stCache?.data as CacheData | null;
+  const refreshedAt = stCache?.refreshed_at ?? null;
 
-      // Revenue report calls are serialized to avoid hitting ServiceTitan's rate
-      // limiter — firing 3+ paginated report requests simultaneously triggers 429s.
-      const mtdTotal = await getTotalRevenue(creds, firstOfMonth, today);
-      const wtdTotal = await getTotalRevenue(creds, weekStart, today);
-      const yesterdayTotal = await getTotalRevenue(creds, yesterdayStr, yesterdayStr);
+  const liveRevenue = cached
+    ? { mtdRevenue: cached.mtdRevenue, wtdRevenue: cached.wtdRevenue, yesterdayRevenue: cached.yesterdayRevenue }
+    : null;
 
-      // Lighter calls (single-page responses) are safe to run in parallel.
-      const [businessUnits, callsRan, closeRateByBU] = await Promise.all([
-        getBusinessUnits(creds),
-        getCallsRan(creds, firstOfMonth, today),
-        getCloseRateByBU(creds, firstOfMonth, today),
-      ]);
-      liveRevenue = { mtdRevenue: mtdTotal, wtdRevenue: wtdTotal, yesterdayRevenue: yesterdayTotal };
-      liveCallsRan = callsRan;
-      liveCloseRateByBU = closeRateByBU;
-
-      // Map real ServiceTitan business units onto the dashboard's 3 manual-entry
-      // department cards by name keyword — works for the "HVAC - X" naming
-      // convention seen on Reed's account; may need adjusting for other tenants.
-      const findUnit = (keyword: string) =>
-        businessUnits.find((u) => u.name.toLowerCase().includes(keyword));
-      const maintenanceUnit = findUnit("maintenance");
-      const serviceUnit = findUnit("service");
-      const installUnit = findUnit("install");
-      const deptUnits = [maintenanceUnit, serviceUnit, installUnit].filter(
-        (u): u is { id: number; name: string; active: boolean } => Boolean(u)
-      );
-
-      if (deptUnits.length > 0) {
-        const [perf, crewCount] = await Promise.all([
-          getDepartmentPerformance(creds, deptUnits, firstOfMonth, today),
-          installUnit ? getInstallCrewCount(creds, installUnit.id) : Promise.resolve(0),
-        ]);
-        liveDeptPerformance = {};
-        if (maintenanceUnit) liveDeptPerformance.Maintenance = perf[maintenanceUnit.name];
-        if (serviceUnit) liveDeptPerformance.Service = perf[serviceUnit.name];
-        if (installUnit) liveDeptPerformance.Installation = perf[installUnit.name];
-        liveInstallCrewCount = crewCount;
+  const liveDeptPerformance = cached?.deptPerformance
+    ? {
+        Maintenance: cached.deptPerformance.Maintenance ?? { revenue: 0, jobsCompleted: 0 },
+        Service: cached.deptPerformance.Service ?? { revenue: 0, jobsCompleted: 0 },
+        Installation: cached.deptPerformance.Installation ?? { revenue: 0, jobsCompleted: 0 },
       }
-    } catch (err) {
-      liveRevenueError = err instanceof Error ? err.message : String(err);
-      console.error("ServiceTitan live data fetch failed:", liveRevenueError);
-    }
-  } else if (serviceTitanConnected && !stCred) {
-    liveRevenueError = "crm_credentials marked connected but no row was found for this tenant";
-  }
+    : null;
 
-  const savedGoals = goals ? {
-    monthlyRevenueGoal: goals.monthly_revenue_goal,
-    monthlySoldHourGoal: goals.monthly_sold_hour_goal,
-    weeklyRevenueGoal: goals.weekly_revenue_goal,
-    weeklySoldHourGoal: goals.weekly_sold_hour_goal,
-    workingDaysMonth: goals.working_days_month,
-    trade: (TRADE_MAP[tenant?.trade ?? "HVAC"] ?? "HVAC") as any,
-    businessUnits: (units ?? []).map((u: Record<string, any>) => ({
-      name: u.name,
-      targetCloseRate: u.target_close_rate,
-      targetRpl: u.target_rpl,
-      includesInstall: u.includes_install,
-    })),
-  } : null;
+  const savedGoals = goals
+    ? {
+        monthlyRevenueGoal: goals.monthly_revenue_goal,
+        monthlySoldHourGoal: goals.monthly_sold_hour_goal,
+        weeklyRevenueGoal: goals.weekly_revenue_goal,
+        weeklySoldHourGoal: goals.weekly_sold_hour_goal,
+        workingDaysMonth: goals.working_days_month,
+        trade: (TRADE_MAP[tenant?.trade ?? "HVAC"] ?? "HVAC") as any,
+        businessUnits: (units ?? []).map((u: Record<string, any>) => ({
+          name: u.name,
+          targetCloseRate: u.target_close_rate,
+          targetRpl: u.target_rpl,
+          includesInstall: u.includes_install,
+        })),
+      }
+    : null;
 
   return (
     <CommandBoard
       savedGoals={savedGoals}
       serviceTitanConnected={serviceTitanConnected}
       liveRevenue={liveRevenue}
-      liveRevenueError={liveRevenueError}
+      liveRevenueError={null}
       liveDeptPerformance={liveDeptPerformance}
-      liveCallsRan={liveCallsRan}
-      liveCloseRateByBU={liveCloseRateByBU}
-      liveInstallCrewCount={liveInstallCrewCount}
+      liveCallsRan={cached?.callsRan ?? null}
+      liveCloseRateByBU={cached?.closeRateByBU ?? null}
+      liveInstallCrewCount={cached?.installCrewCount ?? null}
+      refreshedAt={refreshedAt}
     />
   );
 }

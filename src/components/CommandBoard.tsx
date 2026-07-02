@@ -1,5 +1,6 @@
 "use client";
 import { useState, useEffect, useCallback } from "react";
+import { useRouter } from "next/navigation";
 import type { STCloseRateByBU } from "@/lib/servicetitan";
 import {
   calculateBoard,
@@ -40,6 +41,7 @@ interface Props {
   liveCallsRan?: number | null;
   liveCloseRateByBU?: Record<string, STCloseRateByBU> | null;
   liveInstallCrewCount?: number | null;
+  refreshedAt?: string | null;
 }
 
 // ─── Trade → Business Unit names ────────────────────────────────────────────
@@ -103,7 +105,29 @@ function defaultUnits(trade: Trade, saved?: SavedGoals["businessUnits"]): UnitIn
 
 // ─── Component ───────────────────────────────────────────────────────────────
 
-export default function CommandBoard({ savedGoals, serviceTitanConnected, liveRevenue, liveRevenueError, liveDeptPerformance, liveCallsRan, liveCloseRateByBU, liveInstallCrewCount }: Props) {
+export default function CommandBoard({ savedGoals, serviceTitanConnected, liveRevenue, liveRevenueError, liveDeptPerformance, liveCallsRan, liveCloseRateByBU, liveInstallCrewCount, refreshedAt }: Props) {
+  const router = useRouter();
+  const [refreshing, setRefreshing] = useState(false);
+  const [refreshError, setRefreshError] = useState<string | null>(null);
+
+  const handleRefresh = useCallback(async () => {
+    setRefreshing(true);
+    setRefreshError(null);
+    try {
+      const res = await fetch("/api/servicetitan/refresh", { method: "POST" });
+      if (!res.ok) {
+        const err = await res.json();
+        setRefreshError(err.error ?? "Refresh failed");
+      } else {
+        router.refresh();
+      }
+    } catch {
+      setRefreshError("Network error — try again");
+    } finally {
+      setRefreshing(false);
+    }
+  }, [router]);
+
   const today = new Date().toLocaleDateString("en-US", {
     weekday: "long", year: "numeric", month: "long", day: "numeric",
   });
@@ -227,6 +251,28 @@ export default function CommandBoard({ savedGoals, serviceTitanConnected, liveRe
                 {serviceTitanConnected ? "ServiceTitan Connected" : "Titan Daily Command Board"}
               </span>
             </div>
+            {serviceTitanConnected && (
+              <div style={{ marginTop: "12px" }}>
+                <button
+                  onClick={handleRefresh}
+                  disabled={refreshing}
+                  style={styles.refreshBtn}
+                >
+                  {refreshing ? "Pulling data…" : "⚡ Refresh from ServiceTitan"}
+                </button>
+                {refreshedAt && (
+                  <p style={styles.refreshNote}>
+                    Last updated: {new Date(refreshedAt).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}
+                  </p>
+                )}
+                {!refreshedAt && !refreshing && (
+                  <p style={styles.refreshNote}>No data yet — click Refresh</p>
+                )}
+                {refreshError && (
+                  <p style={{ ...styles.refreshNote, color: "var(--tf-red)" }}>{refreshError}</p>
+                )}
+              </div>
+            )}
           </div>
         </div>
 
@@ -666,4 +712,6 @@ const styles: Record<string, React.CSSProperties> = {
 
   disclaimer: { marginTop: "24px", padding: "18px 20px", background: "rgba(32,31,31,.7)", border: "1px solid rgba(164,140,122,.18)", borderLeft: "4px solid rgba(255,140,0,.65)", color: "var(--tf-muted)", fontSize: "11px", lineHeight: 1.6 },
   disclaimerTitle: { display: "block", color: "var(--tf-orange)", fontFamily: "'Space Grotesk',Inter,Arial,sans-serif", fontSize: "12px", textTransform: "uppercase", letterSpacing: ".12em", marginBottom: "6px" },
+  refreshBtn: { background: "var(--tf-orange)", color: "#2f1500", border: "none", padding: "8px 14px", fontFamily: "'Space Grotesk',Inter,Arial,sans-serif", fontWeight: 900, fontSize: "12px", textTransform: "uppercase", letterSpacing: ".08em", cursor: "pointer", borderRadius: "3px", width: "100%" },
+  refreshNote: { margin: "6px 0 0", fontSize: "11px", color: "var(--tf-muted)" },
 };
