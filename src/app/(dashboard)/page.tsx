@@ -59,13 +59,14 @@ export default async function DashboardPage() {
       yesterday.setDate(now.getDate() - 1);
       const yesterdayStr = isoDate(yesterday);
 
-      // Use getTotalRevenue (report 363) for the company-wide figures -- report 3201
-      // (used below for the per-department breakdown) silently drops any invoice
-      // without a Business Unit assigned, which undercounted real revenue here.
-      const [mtdTotal, wtdTotal, yesterdayTotal, businessUnits, callsRan, closeRateByBU] = await Promise.all([
-        getTotalRevenue(creds, firstOfMonth, today),
-        getTotalRevenue(creds, weekStart, today),
-        getTotalRevenue(creds, yesterdayStr, yesterdayStr),
+      // Revenue report calls are serialized to avoid hitting ServiceTitan's rate
+      // limiter — firing 3+ paginated report requests simultaneously triggers 429s.
+      const mtdTotal = await getTotalRevenue(creds, firstOfMonth, today);
+      const wtdTotal = await getTotalRevenue(creds, weekStart, today);
+      const yesterdayTotal = await getTotalRevenue(creds, yesterdayStr, yesterdayStr);
+
+      // Lighter calls (single-page responses) are safe to run in parallel.
+      const [businessUnits, callsRan, closeRateByBU] = await Promise.all([
         getBusinessUnits(creds),
         getCallsRan(creds, firstOfMonth, today),
         getCloseRateByBU(creds, firstOfMonth, today),

@@ -49,7 +49,7 @@ async function getAccessToken(creds: STCredentials): Promise<string> {
   return json.access_token;
 }
 
-async function stFetch(creds: STCredentials, path: string): Promise<any> {
+async function stFetch(creds: STCredentials, path: string, retries = 2): Promise<any> {
   const token = await getAccessToken(creds);
   const res = await fetch(`${API_BASE}${path}`, {
     headers: {
@@ -57,6 +57,10 @@ async function stFetch(creds: STCredentials, path: string): Promise<any> {
       "ST-App-Key": creds.appKey,
     },
   });
+  if (res.status === 429 && retries > 0) {
+    await new Promise((r) => setTimeout(r, 8000));
+    return stFetch(creds, path, retries - 1);
+  }
   if (!res.ok) {
     throw new Error(`ServiceTitan API error (${res.status}) for ${path}: ${await res.text()}`);
   }
@@ -100,7 +104,7 @@ async function runReport(
   let page = 1;
   let hasMore = true;
   while (hasMore) {
-    const res = await fetch(
+    let res = await fetch(
       `${API_BASE}/reporting/v2/tenant/${creds.stTenantId}/report-category/${category}/reports/${reportId}/data?page=${page}&pageSize=500`,
       {
         method: "POST",
@@ -112,6 +116,21 @@ async function runReport(
         body: JSON.stringify({ parameters }),
       }
     );
+    if (res.status === 429) {
+      await new Promise((r) => setTimeout(r, 8000));
+      res = await fetch(
+        `${API_BASE}/reporting/v2/tenant/${creds.stTenantId}/report-category/${category}/reports/${reportId}/data?page=${page}&pageSize=500`,
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "ST-App-Key": creds.appKey,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ parameters }),
+        }
+      );
+    }
     if (!res.ok) {
       throw new Error(`ServiceTitan report ${reportId} error (${res.status}): ${await res.text()}`);
     }
