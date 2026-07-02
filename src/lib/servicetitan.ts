@@ -49,6 +49,11 @@ async function getAccessToken(creds: STCredentials): Promise<string> {
   return json.access_token;
 }
 
+function parseRetryAfter(body: string): number {
+  const match = body.match(/try again in (\d+) second/i);
+  return match ? (parseInt(match[1]) + 2) * 1000 : 15000;
+}
+
 async function stFetch(creds: STCredentials, path: string, retries = 2): Promise<any> {
   const token = await getAccessToken(creds);
   const res = await fetch(`${API_BASE}${path}`, {
@@ -58,7 +63,8 @@ async function stFetch(creds: STCredentials, path: string, retries = 2): Promise
     },
   });
   if (res.status === 429 && retries > 0) {
-    await new Promise((r) => setTimeout(r, 8000));
+    const body = await res.text();
+    await new Promise((r) => setTimeout(r, parseRetryAfter(body)));
     return stFetch(creds, path, retries - 1);
   }
   if (!res.ok) {
@@ -117,7 +123,8 @@ async function runReport(
       }
     );
     if (res.status === 429) {
-      await new Promise((r) => setTimeout(r, 8000));
+      const body = await res.text();
+      await new Promise((r) => setTimeout(r, parseRetryAfter(body)));
       res = await fetch(
         `${API_BASE}/reporting/v2/tenant/${creds.stTenantId}/report-category/${category}/reports/${reportId}/data?page=${page}&pageSize=500`,
         {
