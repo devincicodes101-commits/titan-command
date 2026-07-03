@@ -116,17 +116,18 @@ export default function CommandBoard({ savedGoals, serviceTitanConnected, liveRe
     try {
       const res = await fetch("/api/servicetitan/refresh", { method: "POST" });
       if (!res.ok) {
-        const err = await res.json();
-        setRefreshError(err.error ?? "Refresh failed");
+        const err = await res.json().catch(() => ({}));
+        setRefreshError(err.error ?? `Refresh failed (${res.status})`);
+        setRefreshing(false);
       } else {
-        router.refresh();
+        // Full reload so useState re-initializes with fresh server props.
+        window.location.reload();
       }
     } catch {
       setRefreshError("Network error — try again");
-    } finally {
       setRefreshing(false);
     }
-  }, [router]);
+  }, []);
 
   const today = new Date().toLocaleDateString("en-US", {
     weekday: "long", year: "numeric", month: "long", day: "numeric",
@@ -182,6 +183,30 @@ export default function CommandBoard({ savedGoals, serviceTitanConnected, liveRe
     Service: liveDeptPerformance?.Service ?? { revenue: 0, jobsCompleted: 0 },
     Installation: liveDeptPerformance?.Installation ?? { revenue: 0, jobsCompleted: 0 },
   });
+
+  // Sync live revenue into inputs whenever the server sends fresh cache data.
+  useEffect(() => {
+    if (!liveRevenue) return;
+    setInputs((prev) => ({
+      ...prev,
+      mtdRevenue: liveRevenue.mtdRevenue,
+      wtdRevenue: liveRevenue.wtdRevenue,
+      yesterdayRevenue: liveRevenue.yesterdayRevenue,
+    }));
+  }, [liveRevenue?.mtdRevenue, liveRevenue?.wtdRevenue, liveRevenue?.yesterdayRevenue]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (liveCallsRan != null) setInputs((prev) => ({ ...prev, totalMtdCalls: liveCallsRan }));
+  }, [liveCallsRan]);
+
+  useEffect(() => {
+    if (liveInstallCrewCount != null) setInputs((prev) => ({ ...prev, installCrews: liveInstallCrewCount }));
+  }, [liveInstallCrewCount]);
+
+  useEffect(() => {
+    const installRev = liveDeptPerformance?.Installation?.revenue;
+    if (installRev != null) setInputs((prev) => ({ ...prev, installRevenue: installRev }));
+  }, [liveDeptPerformance?.Installation?.revenue]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Re-map unit names when trade changes (but keep numeric values)
   useEffect(() => {
