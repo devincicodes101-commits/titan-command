@@ -54,16 +54,16 @@ export async function GET() {
   }
 
   const results = await Promise.all([
-    // Payroll - job splits (contain sold hours per job)
-    tryEndpoint("jobsplits", `/payroll/v2/tenant/${stId}/jobsplits?from=${from}&to=${to}&pageSize=5`),
-    // Payroll - activity codes
-    tryEndpoint("activity-codes", `/payroll/v2/tenant/${stId}/activity-codes?pageSize=5`),
-    // Payroll - non-job timesheets
-    tryEndpoint("non-job-timesheets", `/payroll/v2/tenant/${stId}/non-job-timesheets?from=${from}&to=${to}&pageSize=5`),
-    // Reporting - payroll category (was 403 before)
+    // Payroll - job splits path variations
+    tryEndpoint("jobsplits-v1", `/payroll/v2/tenant/${stId}/jobsplits?from=${from}&to=${to}&pageSize=5`),
+    tryEndpoint("job-splits-hyphen", `/payroll/v2/tenant/${stId}/job-splits?from=${from}&to=${to}&pageSize=5`),
+    tryEndpoint("payrolls", `/payroll/v2/tenant/${stId}/payrolls?from=${from}&to=${to}&pageSize=5`),
+    tryEndpoint("timesheets", `/payroll/v2/tenant/${stId}/timesheets?from=${from}&to=${to}&pageSize=5`),
+    tryEndpoint("gross-pay-items", `/payroll/v2/tenant/${stId}/gross-pay-items?from=${from}&to=${to}&pageSize=5`),
+    // Reporting categories
     tryEndpoint("report-category-payroll", `/reporting/v2/tenant/${stId}/report-category/payroll/reports`),
-    // Reporting - operations category
-    tryEndpoint("report-category-operations", `/reporting/v2/tenant/${stId}/report-category/operations/reports`),
+    tryEndpoint("report-category-labor", `/reporting/v2/tenant/${stId}/report-category/labor/reports`),
+    tryEndpoint("report-category-dispatch", `/reporting/v2/tenant/${stId}/report-category/dispatch/reports`),
   ]);
 
   return NextResponse.json(results);
