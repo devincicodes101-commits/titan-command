@@ -233,7 +233,9 @@ export interface STCloseRateByBU {
   closedJobs: number;
 }
 
-// Total inbound call count for the period — used for Calls Ran in Section 02.
+// Inbound call count for the period — matches the "Calls Taken" column in the
+// ST Calls report. direction=Inbound excludes outbound calls made by staff,
+// keeping the count consistent with what the CSR report shows.
 export async function getCallsRan(
   creds: STCredentials,
   from: string,
@@ -241,7 +243,7 @@ export async function getCallsRan(
 ): Promise<number> {
   const data = await stFetch(
     creds,
-    `/telecom/v2/tenant/${creds.stTenantId}/calls?createdOnOrAfter=${from}T00:00:00Z&createdOnOrBefore=${to}T23:59:59Z&pageSize=1&includeTotal=true`
+    `/telecom/v2/tenant/${creds.stTenantId}/calls?createdOnOrAfter=${from}T00:00:00Z&createdOnOrBefore=${to}T23:59:59Z&direction=Inbound&pageSize=1&includeTotal=true`
   );
   return data.totalCount ?? 0;
 }
