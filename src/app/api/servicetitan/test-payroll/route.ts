@@ -54,16 +54,19 @@ export async function GET() {
   }
 
   const results = await Promise.all([
-    // Payroll - job splits path variations
-    tryEndpoint("jobsplits-v1", `/payroll/v2/tenant/${stId}/jobsplits?from=${from}&to=${to}&pageSize=5`),
-    tryEndpoint("job-splits-hyphen", `/payroll/v2/tenant/${stId}/job-splits?from=${from}&to=${to}&pageSize=5`),
-    tryEndpoint("payrolls", `/payroll/v2/tenant/${stId}/payrolls?from=${from}&to=${to}&pageSize=5`),
-    tryEndpoint("timesheets", `/payroll/v2/tenant/${stId}/timesheets?from=${from}&to=${to}&pageSize=5`),
-    tryEndpoint("gross-pay-items", `/payroll/v2/tenant/${stId}/gross-pay-items?from=${from}&to=${to}&pageSize=5`),
-    // Reporting categories
-    tryEndpoint("report-category-payroll", `/reporting/v2/tenant/${stId}/report-category/payroll/reports`),
-    tryEndpoint("report-category-labor", `/reporting/v2/tenant/${stId}/report-category/labor/reports`),
+    // Estimates — check if soldHours field exists on sold estimates
+    tryEndpoint("estimates-sold-sample", `/sales/v2/tenant/${stId}/estimates?createdOnOrAfter=${from}T00:00:00Z&pageSize=3`),
+    // Dispatch — technician shifts (Techs Available Today)
+    tryEndpoint("dispatch-shifts", `/dispatch/v2/tenant/${stId}/shifts?from=${from}&to=${to}&pageSize=5`),
+    tryEndpoint("dispatch-teams", `/dispatch/v2/tenant/${stId}/teams?pageSize=5`),
+    tryEndpoint("dispatch-technicians", `/dispatch/v2/tenant/${stId}/technicians?pageSize=5`),
+    // Schedule — capacity
+    tryEndpoint("schedule-availability", `/scheduling/v2/tenant/${stId}/availability?from=${from}&to=${to}&pageSize=5`),
+    // Jobs — today's jobs booked (Today's Opportunities)
+    tryEndpoint("jobs-today", `/jpm/v2/tenant/${stId}/jobs?createdOnOrAfter=${from}T00:00:00Z&pageSize=5`),
+    // Reporting — check if any new categories opened
     tryEndpoint("report-category-dispatch", `/reporting/v2/tenant/${stId}/report-category/dispatch/reports`),
+    tryEndpoint("report-category-labor", `/reporting/v2/tenant/${stId}/report-category/labor/reports`),
   ]);
 
   return NextResponse.json(results);
