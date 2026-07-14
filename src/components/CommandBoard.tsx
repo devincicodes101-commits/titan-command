@@ -176,7 +176,7 @@ export default function CommandBoard({ savedGoals, serviceTitanConnected, liveRe
         if ((n.includes("sales") || unit.includesInstall) && bn.includes("sales")) { match = data; break; }
       }
       if (!match) return unit;
-      return { ...unit, actualCloseRate: match.closeRate, mtdSales: match.mtdSales };
+      return { ...unit, actualCloseRate: match.closeRate, mtdSales: match.mtdSales, mtdOpps: match.mtdOpps };
     });
   });
 

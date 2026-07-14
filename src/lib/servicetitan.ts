@@ -245,6 +245,7 @@ export interface STCloseRateByBU {
   mtdSales: number;
   closedJobs: number;
   soldHours: number;
+  mtdOpps: number;
 }
 
 // Inbound call count for the period — matches the "Calls Taken" column in the
@@ -286,11 +287,12 @@ export async function getCloseRateByBU(
     page++;
   }
 
-  const byBU: Record<string, { sold: number; dismissed: number; subtotal: number; soldHours: number }> = {};
+  const byBU: Record<string, { sold: number; dismissed: number; total: number; subtotal: number; soldHours: number }> = {};
   for (const est of estimates) {
     const bu = est.businessUnitName as string | null;
     if (!bu) continue;
-    if (!byBU[bu]) byBU[bu] = { sold: 0, dismissed: 0, subtotal: 0, soldHours: 0 };
+    if (!byBU[bu]) byBU[bu] = { sold: 0, dismissed: 0, total: 0, subtotal: 0, soldHours: 0 };
+    byBU[bu].total++;
     const status = (est.status as { name?: string } | null)?.name;
     if (status === "Sold") {
       byBU[bu].sold++;
@@ -306,12 +308,13 @@ export async function getCloseRateByBU(
 
   const result: Record<string, STCloseRateByBU> = {};
   for (const [bu, counts] of Object.entries(byBU)) {
-    const total = counts.sold + counts.dismissed;
+    const closeable = counts.sold + counts.dismissed;
     result[bu] = {
-      closeRate: total > 0 ? round2((counts.sold / total) * 100) : 0,
+      closeRate: closeable > 0 ? round2((counts.sold / closeable) * 100) : 0,
       mtdSales: round2(counts.subtotal),
       closedJobs: counts.sold,
       soldHours: round2(counts.soldHours),
+      mtdOpps: counts.total,
     };
   }
   return result;
