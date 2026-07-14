@@ -208,15 +208,15 @@ export async function getTotalRevenue(
   return round2(total);
 }
 
-// All jobs currently in Scheduled status — matches the "Scheduled" count on the
-// ST Dispatch Board. No date filter so it includes all open scheduled jobs.
+// Jobs with an appointment today in any active status — matches the ST Dispatch
+// Board count for today. Uses "Working" (not "InProgress") per the ST API.
 export async function getTodaysOpportunities(
   creds: STCredentials,
   today: string
 ): Promise<number> {
   const data = await stFetch(
     creds,
-    `/jpm/v2/tenant/${creds.stTenantId}/jobs?jobStatus=Scheduled&pageSize=1&includeTotal=true`
+    `/jpm/v2/tenant/${creds.stTenantId}/jobs?scheduledOnOrAfter=${today}T00:00:00Z&scheduledOnOrBefore=${today}T23:59:59Z&jobStatus=Scheduled,Dispatched,Working,Hold&pageSize=1&includeTotal=true`
   );
   return data.totalCount ?? 0;
 }
@@ -295,49 +295,36 @@ export async function getCloseRateByBU(
     return out;
   }
 
-  const [created, soldThisMonth] = await Promise.all([
-    paginateEstimates(`createdOnOrAfter=${from}T00:00:00Z`),
-    paginateEstimates(`soldOnOrAfter=${from}T00:00:00Z`),
-  ]);
+  const estimates = await paginateEstimates(`createdOnOrAfter=${from}T00:00:00Z`);
 
-  // MTD Opps and close rate — from estimates created this month
-  const oppsByBU: Record<string, { sold: number; dismissed: number; total: number }> = {};
-  for (const est of created) {
+  const byBU: Record<string, { sold: number; dismissed: number; total: number; subtotal: number; soldHours: number }> = {};
+  for (const est of estimates) {
     const bu = est.businessUnitName as string | null;
     if (!bu) continue;
-    if (!oppsByBU[bu]) oppsByBU[bu] = { sold: 0, dismissed: 0, total: 0 };
-    oppsByBU[bu].total++;
+    if (!byBU[bu]) byBU[bu] = { sold: 0, dismissed: 0, total: 0, subtotal: 0, soldHours: 0 };
+    byBU[bu].total++;
     const status = (est.status as { name?: string } | null)?.name;
-    if (status === "Sold") oppsByBU[bu].sold++;
-    else if (status === "Dismissed") oppsByBU[bu].dismissed++;
-  }
-
-  // MTD Sales $ and Sold Hours — from estimates sold this month
-  const salesByBU: Record<string, { count: number; subtotal: number; soldHours: number }> = {};
-  for (const est of soldThisMonth) {
-    const bu = est.businessUnitName as string | null;
-    if (!bu) continue;
-    if (!salesByBU[bu]) salesByBU[bu] = { count: 0, subtotal: 0, soldHours: 0 };
-    salesByBU[bu].count++;
-    salesByBU[bu].subtotal += Number(est.subtotal) || 0;
-    const items = (est.items as { qty?: number; sku?: { soldHours?: number } }[]) ?? [];
-    for (const item of items) {
-      salesByBU[bu].soldHours += (Number(item.sku?.soldHours) || 0) * (Number(item.qty) || 0);
+    if (status === "Sold") {
+      byBU[bu].sold++;
+      byBU[bu].subtotal += Number(est.subtotal) || 0;
+      const items = (est.items as { qty?: number; sku?: { soldHours?: number } }[]) ?? [];
+      for (const item of items) {
+        byBU[bu].soldHours += (Number(item.sku?.soldHours) || 0) * (Number(item.qty) || 0);
+      }
+    } else if (status === "Dismissed") {
+      byBU[bu].dismissed++;
     }
   }
 
-  const allBUs = new Set([...Object.keys(oppsByBU), ...Object.keys(salesByBU)]);
   const result: Record<string, STCloseRateByBU> = {};
-  for (const bu of allBUs) {
-    const opps = oppsByBU[bu] ?? { sold: 0, dismissed: 0, total: 0 };
-    const sales = salesByBU[bu] ?? { count: 0, subtotal: 0, soldHours: 0 };
-    const closeable = opps.sold + opps.dismissed;
+  for (const [bu, counts] of Object.entries(byBU)) {
+    const closeable = counts.sold + counts.dismissed;
     result[bu] = {
-      closeRate: closeable > 0 ? round2((opps.sold / closeable) * 100) : 0,
-      mtdSales: round2(sales.subtotal),
-      closedJobs: sales.count,
-      soldHours: round2(sales.soldHours),
-      mtdOpps: opps.total,
+      closeRate: closeable > 0 ? round2((counts.sold / closeable) * 100) : 0,
+      mtdSales: round2(counts.subtotal),
+      closedJobs: counts.sold,
+      soldHours: round2(counts.soldHours),
+      mtdOpps: counts.total,
     };
   }
   return result;
