@@ -42,6 +42,7 @@ interface Props {
   liveCloseRateByBU?: Record<string, STCloseRateByBU> | null;
   liveInstallCrewCount?: number | null;
   liveMtdSoldHours?: number | null;
+  liveTodaysOpportunities?: number | null;
   refreshedAt?: string | null;
 }
 
@@ -106,7 +107,7 @@ function defaultUnits(trade: Trade, saved?: SavedGoals["businessUnits"]): UnitIn
 
 // ─── Component ───────────────────────────────────────────────────────────────
 
-export default function CommandBoard({ savedGoals, serviceTitanConnected, liveRevenue, liveRevenueError, liveDeptPerformance, liveCallsRan, liveCloseRateByBU, liveInstallCrewCount, liveMtdSoldHours, refreshedAt }: Props) {
+export default function CommandBoard({ savedGoals, serviceTitanConnected, liveRevenue, liveRevenueError, liveDeptPerformance, liveCallsRan, liveCloseRateByBU, liveInstallCrewCount, liveMtdSoldHours, liveTodaysOpportunities, refreshedAt }: Props) {
   const router = useRouter();
   const [refreshing, setRefreshing] = useState(false);
   const [refreshError, setRefreshError] = useState<string | null>(null);
@@ -207,6 +208,10 @@ export default function CommandBoard({ savedGoals, serviceTitanConnected, liveRe
   useEffect(() => {
     if (liveMtdSoldHours != null) setInputs((prev) => ({ ...prev, mtdSoldHours: liveMtdSoldHours }));
   }, [liveMtdSoldHours]);
+
+  useEffect(() => {
+    if (liveTodaysOpportunities != null) setInputs((prev) => ({ ...prev, todayOpportunities: liveTodaysOpportunities }));
+  }, [liveTodaysOpportunities]);
 
   useEffect(() => {
     const installRev = liveDeptPerformance?.Installation?.revenue;
@@ -361,7 +366,7 @@ export default function CommandBoard({ savedGoals, serviceTitanConnected, liveRe
               <NumField label={liveRevenue ? "Yesterday Revenue (Live ⚡)" : "Yesterday Revenue"} val={inputs.yesterdayRevenue} onChange={(v) => setInput("yesterdayRevenue", v)} />
               <NumField label={liveCallsRan != null ? "Total MTD Calls Ran (Live ⚡)" : "Total MTD Calls Ran"} val={inputs.totalMtdCalls} onChange={(v) => setInput("totalMtdCalls", v)} step={1} />
               <NumField label={liveMtdSoldHours != null ? "MTD Sold Hours (Live ⚡)" : "MTD Sold Hours"} val={inputs.mtdSoldHours} onChange={(v) => setInput("mtdSoldHours", v)} step={0.1} />
-              <NumField label="Today's Opportunities" val={inputs.todayOpportunities} onChange={(v) => setInput("todayOpportunities", v)} step={1} />
+              <NumField label={liveTodaysOpportunities != null ? "Today's Opportunities (Live ⚡)" : "Today's Opportunities"} val={inputs.todayOpportunities} onChange={(v) => setInput("todayOpportunities", v)} step={1} />
               <NumField label="Techs Available Today" val={inputs.techsAvailableToday} onChange={(v) => setInput("techsAvailableToday", v)} step={1} />
               <NumField label="Avg Sold Hours / Tech Today" val={inputs.avgSoldHoursPerTech} onChange={(v) => setInput("avgSoldHoursPerTech", v)} step={0.1} />
             </InputGrid>

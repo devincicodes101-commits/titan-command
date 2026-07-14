@@ -45,6 +45,7 @@ export default async function DashboardPage() {
     deptPerformance: Record<string, { revenue: number; jobsCompleted: number } | null>;
     installCrewCount: number;
     mtdSoldHours: number;
+    todaysOpportunities: number;
   };
 
   const cached = stCache?.data as CacheData | null;
@@ -90,6 +91,7 @@ export default async function DashboardPage() {
       liveCloseRateByBU={cached?.closeRateByBU ?? null}
       liveInstallCrewCount={cached?.installCrewCount ?? null}
       liveMtdSoldHours={cached?.mtdSoldHours ?? null}
+      liveTodaysOpportunities={cached?.todaysOpportunities ?? null}
       refreshedAt={refreshedAt}
     />
   );

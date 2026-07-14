@@ -8,6 +8,7 @@ import {
   getCallsRan,
   getCloseRateByBU,
   getInstallCrewCount,
+  getTodaysOpportunities,
   type STCredentials,
 } from "@/lib/servicetitan";
 
@@ -55,10 +56,11 @@ export async function POST() {
   const wtdRevenue = await getTotalRevenue(creds, weekStart, today);
   const yesterdayRevenue = await getTotalRevenue(creds, yesterdayStr, yesterdayStr);
 
-  const [businessUnits, callsRan, closeRateByBU] = await Promise.all([
+  const [businessUnits, callsRan, closeRateByBU, todaysOpportunities] = await Promise.all([
     getBusinessUnits(creds),
     getCallsRan(creds, firstOfMonth, today),
     getCloseRateByBU(creds, firstOfMonth, today),
+    getTodaysOpportunities(creds, today),
   ]);
 
   const findUnit = (keyword: string) =>
@@ -99,6 +101,7 @@ export async function POST() {
     installCrewCount,
     businessUnits,
     mtdSoldHours,
+    todaysOpportunities,
   };
 
   await supabase.from("st_cache").upsert(

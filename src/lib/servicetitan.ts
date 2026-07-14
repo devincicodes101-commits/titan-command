@@ -208,6 +208,19 @@ export async function getTotalRevenue(
   return round2(total);
 }
 
+// Jobs scheduled for today across all BUs — used for Today's Opportunities.
+// Excludes cancelled jobs; counts everything dispatched, in-progress, or scheduled.
+export async function getTodaysOpportunities(
+  creds: STCredentials,
+  today: string
+): Promise<number> {
+  const data = await stFetch(
+    creds,
+    `/jpm/v2/tenant/${creds.stTenantId}/jobs?scheduledOnOrAfter=${today}T00:00:00Z&scheduledOnOrBefore=${today}T23:59:59Z&jobStatus=Scheduled,Dispatched,InProgress,Hold&pageSize=1&includeTotal=true`
+  );
+  return data.totalCount ?? 0;
+}
+
 // Counts completed jobs for one business unit using the API's own totalCount,
 // rather than paginating every job just to count them.
 export async function getCompletedJobsCount(
