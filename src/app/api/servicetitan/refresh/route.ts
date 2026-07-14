@@ -85,6 +85,10 @@ export async function POST() {
     installCrewCount = crewCount;
   }
 
+  const mtdSoldHours = Math.round(
+    Object.values(closeRateByBU).reduce((sum, bu) => sum + bu.soldHours, 0) * 100
+  ) / 100;
+
   const cacheData = {
     mtdRevenue,
     wtdRevenue,
@@ -94,6 +98,7 @@ export async function POST() {
     deptPerformance,
     installCrewCount,
     businessUnits,
+    mtdSoldHours,
   };
 
   await supabase.from("st_cache").upsert(
