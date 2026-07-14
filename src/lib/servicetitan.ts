@@ -264,57 +264,80 @@ export async function getCallsRan(
 }
 
 // Paginates all estimates for the period, groups by business unit name, and
-// returns close rate (Sold / (Sold + Dismissed)), MTD sales dollars, and closed
-// job count per BU — used to pre-fill the Business Unit Scoreboard.
+// returns close rate, MTD sales dollars, sold hours, and opps per BU.
+//
+// MTD Opps / Close Rate: based on estimates CREATED this month (new pipeline).
+// MTD Sales $ / Sold Hours: based on estimates SOLD this month (revenue recognised
+// this month, including estimates written before the period and closed in it) —
+// this matches ServiceTitan's Sales report "Total Sales" column.
 export async function getCloseRateByBU(
   creds: STCredentials,
   from: string,
   to: string
 ): Promise<Record<string, STCloseRateByBU>> {
   const token = await getAccessToken(creds);
-  const estimates: Record<string, unknown>[] = [];
-  let page = 1;
-  let hasMore = true;
-  while (hasMore) {
-    const res = await fetch(
-      `${API_BASE}/sales/v2/tenant/${creds.stTenantId}/estimates?createdOnOrAfter=${from}T00:00:00Z&pageSize=500&page=${page}`,
-      { headers: { Authorization: `Bearer ${token}`, "ST-App-Key": creds.appKey } }
-    );
-    if (!res.ok) throw new Error(`Estimates fetch error (${res.status}): ${await res.text()}`);
-    const json = await res.json();
-    estimates.push(...(json.data ?? []));
-    hasMore = json.hasMore ?? false;
-    page++;
+
+  async function paginateEstimates(queryStr: string): Promise<Record<string, unknown>[]> {
+    const out: Record<string, unknown>[] = [];
+    let page = 1;
+    let hasMore = true;
+    while (hasMore) {
+      const res = await fetch(
+        `${API_BASE}/sales/v2/tenant/${creds.stTenantId}/estimates?${queryStr}&pageSize=500&page=${page}`,
+        { headers: { Authorization: `Bearer ${token}`, "ST-App-Key": creds.appKey } }
+      );
+      if (!res.ok) throw new Error(`Estimates error (${res.status}): ${await res.text()}`);
+      const json = await res.json();
+      out.push(...(json.data ?? []));
+      hasMore = json.hasMore ?? false;
+      page++;
+    }
+    return out;
   }
 
-  const byBU: Record<string, { sold: number; dismissed: number; total: number; subtotal: number; soldHours: number }> = {};
-  for (const est of estimates) {
+  const [created, soldThisMonth] = await Promise.all([
+    paginateEstimates(`createdOnOrAfter=${from}T00:00:00Z`),
+    paginateEstimates(`soldOnOrAfter=${from}T00:00:00Z`),
+  ]);
+
+  // MTD Opps and close rate — from estimates created this month
+  const oppsByBU: Record<string, { sold: number; dismissed: number; total: number }> = {};
+  for (const est of created) {
     const bu = est.businessUnitName as string | null;
     if (!bu) continue;
-    if (!byBU[bu]) byBU[bu] = { sold: 0, dismissed: 0, total: 0, subtotal: 0, soldHours: 0 };
-    byBU[bu].total++;
+    if (!oppsByBU[bu]) oppsByBU[bu] = { sold: 0, dismissed: 0, total: 0 };
+    oppsByBU[bu].total++;
     const status = (est.status as { name?: string } | null)?.name;
-    if (status === "Sold") {
-      byBU[bu].sold++;
-      byBU[bu].subtotal += Number(est.subtotal) || 0;
-      const items = (est.items as { qty?: number; sku?: { soldHours?: number } }[]) ?? [];
-      for (const item of items) {
-        byBU[bu].soldHours += (Number(item.sku?.soldHours) || 0) * (Number(item.qty) || 0);
-      }
-    } else if (status === "Dismissed") {
-      byBU[bu].dismissed++;
+    if (status === "Sold") oppsByBU[bu].sold++;
+    else if (status === "Dismissed") oppsByBU[bu].dismissed++;
+  }
+
+  // MTD Sales $ and Sold Hours — from estimates sold this month
+  const salesByBU: Record<string, { count: number; subtotal: number; soldHours: number }> = {};
+  for (const est of soldThisMonth) {
+    const bu = est.businessUnitName as string | null;
+    if (!bu) continue;
+    if (!salesByBU[bu]) salesByBU[bu] = { count: 0, subtotal: 0, soldHours: 0 };
+    salesByBU[bu].count++;
+    salesByBU[bu].subtotal += Number(est.subtotal) || 0;
+    const items = (est.items as { qty?: number; sku?: { soldHours?: number } }[]) ?? [];
+    for (const item of items) {
+      salesByBU[bu].soldHours += (Number(item.sku?.soldHours) || 0) * (Number(item.qty) || 0);
     }
   }
 
+  const allBUs = new Set([...Object.keys(oppsByBU), ...Object.keys(salesByBU)]);
   const result: Record<string, STCloseRateByBU> = {};
-  for (const [bu, counts] of Object.entries(byBU)) {
-    const closeable = counts.sold + counts.dismissed;
+  for (const bu of allBUs) {
+    const opps = oppsByBU[bu] ?? { sold: 0, dismissed: 0, total: 0 };
+    const sales = salesByBU[bu] ?? { count: 0, subtotal: 0, soldHours: 0 };
+    const closeable = opps.sold + opps.dismissed;
     result[bu] = {
-      closeRate: closeable > 0 ? round2((counts.sold / closeable) * 100) : 0,
-      mtdSales: round2(counts.subtotal),
-      closedJobs: counts.sold,
-      soldHours: round2(counts.soldHours),
-      mtdOpps: counts.total,
+      closeRate: closeable > 0 ? round2((opps.sold / closeable) * 100) : 0,
+      mtdSales: round2(sales.subtotal),
+      closedJobs: sales.count,
+      soldHours: round2(sales.soldHours),
+      mtdOpps: opps.total,
     };
   }
   return result;
