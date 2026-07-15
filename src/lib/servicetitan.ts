@@ -3,6 +3,23 @@ import { decrypt } from "./crypto";
 const AUTH_URL = "https://auth.servicetitan.io/connect/token";
 const API_BASE = "https://api.servicetitan.io";
 
+// Tenant timezone offset (hours behind UTC). Duncan BC = PDT = UTC-7 in summer.
+// Update to UTC-8 (PST) in winter when daylight saving ends.
+const TZ_OFFSET_HOURS = 7;
+
+// Converts a local date string (YYYY-MM-DD) to UTC midnight of that local day.
+function localStart(date: string): string {
+  return `${date}T${String(TZ_OFFSET_HOURS).padStart(2, "0")}:00:00Z`;
+}
+
+// Converts a local date string to UTC end-of-day (23:59:59 local = next day TZ_OFFSET-1:59:59 UTC).
+function localEnd(date: string): string {
+  const d = new Date(date + "T00:00:00Z");
+  d.setDate(d.getDate() + 1);
+  const next = d.toISOString().slice(0, 10);
+  return `${next}T${String(TZ_OFFSET_HOURS - 1).padStart(2, "0")}:59:59Z`;
+}
+
 export interface STCredentials {
   stTenantId: string;
   appKey: string;
@@ -216,7 +233,7 @@ export async function getTodaysOpportunities(
 ): Promise<number> {
   const data = await stFetch(
     creds,
-    `/jpm/v2/tenant/${creds.stTenantId}/jobs?scheduledOnOrAfter=${today}T00:00:00Z&scheduledOnOrBefore=${today}T23:59:59Z&jobStatus=Scheduled,Dispatched,Working,Hold&pageSize=1&includeTotal=true`
+    `/jpm/v2/tenant/${creds.stTenantId}/jobs?scheduledOnOrAfter=${localStart(today)}&scheduledOnOrBefore=${localEnd(today)}&jobStatus=Scheduled,Dispatched,Working,Hold&pageSize=1&includeTotal=true`
   );
   return data.totalCount ?? 0;
 }
@@ -230,7 +247,7 @@ export async function getCompletedJobsCount(
 ): Promise<number> {
   const data = await stFetch(
     creds,
-    `/jpm/v2/tenant/${creds.stTenantId}/jobs?businessUnitId=${businessUnitId}&jobStatus=Completed&completedOnOrAfter=${completedOnOrAfter}T00:00:00Z&pageSize=1&includeTotal=true`
+    `/jpm/v2/tenant/${creds.stTenantId}/jobs?businessUnitId=${businessUnitId}&jobStatus=Completed&completedOnOrAfter=${localStart(completedOnOrAfter)}&pageSize=1&includeTotal=true`
   );
   return data.totalCount ?? 0;
 }
@@ -258,7 +275,7 @@ export async function getCallsRan(
 ): Promise<number> {
   const data = await stFetch(
     creds,
-    `/telecom/v2/tenant/${creds.stTenantId}/calls?createdOnOrAfter=${from}T00:00:00Z&createdOnOrBefore=${to}T23:59:59Z&direction=Inbound&pageSize=1&includeTotal=true`
+    `/telecom/v2/tenant/${creds.stTenantId}/calls?createdOnOrAfter=${localStart(from)}&createdOnOrBefore=${localEnd(to)}&direction=Inbound&pageSize=1&includeTotal=true`
   );
   return data.totalCount ?? 0;
 }
@@ -295,7 +312,7 @@ export async function getCloseRateByBU(
     return out;
   }
 
-  const estimates = await paginateEstimates(`createdOnOrAfter=${from}T00:00:00Z`);
+  const estimates = await paginateEstimates(`createdOnOrAfter=${localStart(from)}`);
 
   const byBU: Record<string, { sold: number; dismissed: number; total: number; subtotal: number; soldHours: number }> = {};
   for (const est of estimates) {
