@@ -41,8 +41,8 @@ export async function POST() {
     clientSecretEncrypted: stCred.client_secret_encrypted,
   };
 
-  // TODO: source per-tenant from ServiceTitan settings; override via env for now.
-  const TENANT_TIME_ZONE = process.env.ST_TENANT_TIMEZONE ?? "America/Los_Angeles";
+  // Tenant timezone (Duncan, BC = Pacific). Override per-tenant via env if needed.
+  const TENANT_TIME_ZONE = process.env.ST_TENANT_TIMEZONE ?? "America/Vancouver";
 
   const now = new Date();
   const today = isoDate(now);
