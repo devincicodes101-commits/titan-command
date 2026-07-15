@@ -225,15 +225,21 @@ export async function getTotalRevenue(
   return round2(total);
 }
 
-// Jobs with an appointment today in any active status — matches the ST Dispatch
-// Board count for today. Uses "Working" (not "InProgress") per the ST API.
+// Jobs scheduled for today in Scheduled status — approximates the ST Dispatch
+// Board count for today.
+// jobStatus is a single enum value — a comma-separated list fails ST model
+// validation with a 400, and because stFetch throws on any non-2xx that took the
+// ENTIRE refresh down (every field on the board blanked, not just this one).
+// "Working" is not a ServiceTitan status either. Reverted to the known-good
+// `Scheduled` while the valid enum members are confirmed; counting Dispatched /
+// in-progress / Hold as well needs one request per status, summed.
 export async function getTodaysOpportunities(
   creds: STCredentials,
   today: string
 ): Promise<number> {
   const data = await stFetch(
     creds,
-    `/jpm/v2/tenant/${creds.stTenantId}/jobs?scheduledOnOrAfter=${localStart(today)}&scheduledOnOrBefore=${localEnd(today)}&jobStatus=Scheduled,Dispatched,Working,Hold&pageSize=1&includeTotal=true`
+    `/jpm/v2/tenant/${creds.stTenantId}/jobs?scheduledOnOrAfter=${localStart(today)}&scheduledOnOrBefore=${localEnd(today)}&jobStatus=Scheduled&pageSize=1&includeTotal=true`
   );
   return data.totalCount ?? 0;
 }
