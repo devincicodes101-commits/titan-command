@@ -42,14 +42,23 @@ export async function POST() {
     clientSecretEncrypted: stCred.client_secret_encrypted,
   };
 
-  const now = new Date();
-  const today = isoDate(now);
-  const firstOfMonth = isoDate(new Date(now.getFullYear(), now.getMonth(), 1));
-  const monday = new Date(now);
-  monday.setDate(now.getDate() - ((now.getDay() + 6) % 7));
+  // Date boundaries in the tenant's LOCAL calendar (America/Vancouver), not UTC.
+  // Vercel runs in UTC, so isoDate(new Date()) rolls to tomorrow every evening in
+  // Vancouver (>=5pm PDT is next-day UTC) — which pushed "today" onto tomorrow's
+  // board and shifted Yesterday Revenue and the week boundary. Anchor date math to
+  // the local calendar date instead.
+  const todayLocal = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Vancouver" }).format(
+    new Date()
+  );
+  const [vy, vm, vd] = todayLocal.split("-").map(Number);
+  const anchor = new Date(Date.UTC(vy, vm - 1, vd)); // UTC-midnight anchor for date math only
+  const today = todayLocal;
+  const firstOfMonth = `${vy}-${String(vm).padStart(2, "0")}-01`;
+  const monday = new Date(anchor);
+  monday.setUTCDate(anchor.getUTCDate() - ((anchor.getUTCDay() + 6) % 7));
   const weekStart = isoDate(monday);
-  const yesterday = new Date(now);
-  yesterday.setDate(now.getDate() - 1);
+  const yesterday = new Date(anchor);
+  yesterday.setUTCDate(anchor.getUTCDate() - 1);
   const yesterdayStr = isoDate(yesterday);
 
   // Revenue calls serialized — firing them in parallel triggers 429 rate limits.
