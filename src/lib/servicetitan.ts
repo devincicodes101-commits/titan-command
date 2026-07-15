@@ -540,14 +540,14 @@ export async function getCloseRateByBU(
   return result;
 }
 
-// Count of active technicians in a given business unit — used for Install Crews.
+// Total active technician count company-wide — used for Install Crews / Techs Available.
 export async function getInstallCrewCount(
   creds: STCredentials,
   installBuId: number
 ): Promise<number> {
   const data = await stFetch(
     creds,
-    `/settings/v2/tenant/${creds.stTenantId}/technicians?businessUnitId=${installBuId}&active=true&pageSize=1&includeTotal=true`
+    `/settings/v2/tenant/${creds.stTenantId}/technicians?active=true&pageSize=1&includeTotal=true`
   );
   return data.totalCount ?? 0;
 }
