@@ -239,7 +239,10 @@ export async function getTodaysOpportunities(
 ): Promise<number> {
   const data = await stFetch(
     creds,
-    `/jpm/v2/tenant/${creds.stTenantId}/jobs?scheduledOnOrAfter=${localStart(today)}&scheduledOnOrBefore=${localEnd(today)}&jobStatus=Scheduled&pageSize=1&includeTotal=true`
+    `/jpm/v2/tenant/${creds.stTenantId}/jobs` +
+      `?appointmentStartsOnOrAfter=${localStart(today)}` +
+      `&appointmentStartsBefore=${localEnd(today)}` +
+      `&jobStatus=Scheduled&pageSize=1&includeTotal=true`
   );
   return data.totalCount ?? 0;
 }
@@ -318,36 +321,91 @@ export async function getCloseRateByBU(
     return out;
   }
 
-  const estimates = await paginateEstimates(`createdOnOrAfter=${localStart(from)}`);
+  // Opps + close rate: estimates CREATED in the period (this month's new
+  // pipeline). createdOnOrAfter is verified real — a year-2100 probe returns 0.
+  const created = await paginateEstimates(`createdOnOrAfter=${localStart(from)}`);
 
-  const byBU: Record<string, { sold: number; dismissed: number; total: number; subtotal: number; soldHours: number }> = {};
-  for (const est of estimates) {
+  // Sales $ + sold hours: estimates SOLD in the period. This is the basis ST's
+  // Sales report uses, so an estimate written in June and sold in July counts —
+  // deriving these from the CREATED set instead read 43% low (121.65 vs 215.13).
+  //
+  // soldAfter/soldBefore are verified real (year-2100 -> 0, year-1900 -> 0).
+  // `soldOnOrAfter` — used here previously — is NOT a real filter: ST silently
+  // ignores unknown params, so it returned all 2,523 estimates ever, which at
+  // ~12.6h each is exactly the bogus 31,803 sold hours the board showed.
+  // Both bounds are exclusive, so widen by 1s and let the check below decide.
+  const shift = (iso: string, ms: number) =>
+    new Date(new Date(iso).getTime() + ms).toISOString();
+  const startMs = new Date(localStart(from)).getTime();
+  const endMs = new Date(localEnd(to)).getTime();
+
+  const soldRaw = await paginateEstimates(
+    `soldAfter=${encodeURIComponent(shift(localStart(from), -1000))}` +
+      `&soldBefore=${encodeURIComponent(shift(localEnd(to), 1000))}`
+  );
+
+  // Never trust a filter to have been applied — that assumption caused both the
+  // 148x over-count and the 400 outage. status.name is a confirmed field.
+  const sold = soldRaw.filter((est) => {
+    if ((est.status as { name?: string } | null)?.name !== "Sold") return false;
+    const soldOn = est.soldOn;
+    if (typeof soldOn !== "string") return true;
+    const t = new Date(soldOn).getTime();
+    return !Number.isFinite(t) || (t >= startMs && t <= endMs);
+  });
+
+  type BUAgg = {
+    oppsTotal: number;
+    oppsSold: number;
+    oppsDismissed: number;
+    salesCount: number;
+    subtotal: number;
+    soldHours: number;
+  };
+  const byBU: Record<string, BUAgg> = {};
+  const ensure = (bu: string): BUAgg =>
+    (byBU[bu] ??= {
+      oppsTotal: 0,
+      oppsSold: 0,
+      oppsDismissed: 0,
+      salesCount: 0,
+      subtotal: 0,
+      soldHours: 0,
+    });
+
+  for (const est of created) {
     const bu = est.businessUnitName as string | null;
     if (!bu) continue;
-    if (!byBU[bu]) byBU[bu] = { sold: 0, dismissed: 0, total: 0, subtotal: 0, soldHours: 0 };
-    byBU[bu].total++;
+    const agg = ensure(bu);
+    agg.oppsTotal++;
     const status = (est.status as { name?: string } | null)?.name;
-    if (status === "Sold") {
-      byBU[bu].sold++;
-      byBU[bu].subtotal += Number(est.subtotal) || 0;
-      const items = (est.items as { qty?: number; sku?: { soldHours?: number } }[]) ?? [];
-      for (const item of items) {
-        byBU[bu].soldHours += (Number(item.sku?.soldHours) || 0) * (Number(item.qty) || 0);
-      }
-    } else if (status === "Dismissed") {
-      byBU[bu].dismissed++;
+    if (status === "Sold") agg.oppsSold++;
+    else if (status === "Dismissed") agg.oppsDismissed++;
+  }
+
+  for (const est of sold) {
+    const bu = est.businessUnitName as string | null;
+    if (!bu) continue;
+    const agg = ensure(bu);
+    agg.salesCount++;
+    agg.subtotal += Number(est.subtotal) || 0;
+    const items = (est.items as { qty?: number; sku?: { soldHours?: number } }[]) ?? [];
+    for (const item of items) {
+      agg.soldHours += (Number(item.sku?.soldHours) || 0) * (Number(item.qty) || 0);
     }
   }
 
   const result: Record<string, STCloseRateByBU> = {};
-  for (const [bu, counts] of Object.entries(byBU)) {
-    const closeable = counts.sold + counts.dismissed;
+  for (const [bu, agg] of Object.entries(byBU)) {
+    const closeable = agg.oppsSold + agg.oppsDismissed;
     result[bu] = {
-      closeRate: closeable > 0 ? round2((counts.sold / closeable) * 100) : 0,
-      mtdSales: round2(counts.subtotal),
-      closedJobs: counts.sold,
-      soldHours: round2(counts.soldHours),
-      mtdOpps: counts.total,
+      closeRate: closeable > 0 ? round2((agg.oppsSold / closeable) * 100) : 0,
+      // Sales, closed jobs and sold hours all come from the SOLD set so that
+      // Company Average Sale (sales / closedJobs) divides like with like.
+      mtdSales: round2(agg.subtotal),
+      closedJobs: agg.salesCount,
+      soldHours: round2(agg.soldHours),
+      mtdOpps: agg.oppsTotal,
     };
   }
   return result;
