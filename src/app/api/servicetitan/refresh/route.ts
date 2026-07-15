@@ -6,6 +6,7 @@ import {
   getBusinessUnits,
   getDepartmentPerformance,
   getCallsRan,
+  getSoldHours,
   getCloseRateByBU,
   getInstallCrewCount,
   getTodaysOpportunities,
@@ -87,9 +88,9 @@ export async function POST() {
     installCrewCount = crewCount;
   }
 
-  const mtdSoldHours = Math.round(
-    Object.values(closeRateByBU).reduce((sum, bu) => sum + bu.soldHours, 0) * 100
-  ) / 100;
+  // Sold hours read from invoice items (job-based) rather than summed off
+  // estimates — 75% of jobs have no estimate, so the estimate sum ran ~40% low.
+  const mtdSoldHours = await getSoldHours(creds, firstOfMonth, today);
 
   const cacheData = {
     mtdRevenue,
