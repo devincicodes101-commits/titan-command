@@ -6,16 +6,20 @@ import { decrypt } from "@/lib/crypto";
 const AUTH_URL = "https://auth.servicetitan.io/connect/token";
 const API_BASE = "https://api.servicetitan.io";
 
-// Sold hours must come from JOBS, not estimates: report 414 shows 67 completed
-// jobs against only 17 sold estimates, so ~50 jobs (75%) were invoiced with no
-// estimate at all. Their hours are invisible to an estimate-based calculation —
-// which is the whole 126.44 vs 215.13 gap, and no estimate-query fix can close it.
+// Two viable sources for job-based sold hours finally surfaced, both inside the
+// accounting category we can already read (no new ST scopes needed):
 //
-// Report 414 itself is unreachable (only the accounting category lists reports).
-// But a report can carry a billable-hours COLUMN without saying so in its name,
-// and we have 39 accounting reports. So scan every one's `fields` for hours —
-// if any exposes them, sold hours can be READ rather than recomputed, with no new
-// ST scopes needed. Also checks whether invoice items carry hours directly.
+//  A. Reports "Sold Hours" (87634674), "Hours" (31940251) and "Invoice Item
+//     Detail with Pricebook Information" (3300). The v4 field-scan skipped the
+//     first two — they returned no fields, so fetch their definitions directly
+//     and find out why (custom reports may need a different call).
+//  B. Invoice items carry a `soldHours` field outright. Invoices are job-based,
+//     so this counts the ~50 estimate-less jobs that estimates can never see.
+//     The one sampled invoice had soldHours: null, but it was a legacy imported
+//     record from Jan 2025 — check a RECENT invoice before drawing conclusions.
+//
+// Every date filter is probed with an absurd bound first: ST silently ignores
+// unknown params, so a filter that returns the unfiltered total is a fake.
 export async function GET() {
   const session = await auth();
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -50,42 +54,66 @@ export async function GET() {
     try {
       return { status: res.status, data: JSON.parse(body) };
     } catch {
-      return { status: res.status, data: body };
+      return { status: res.status, data: body.slice(0, 300) };
     }
   }
-
-  // ---- Scan every accounting report's FIELDS for anything hours-shaped -----
-  const list = await get(
-    `/reporting/v2/tenant/${stId}/report-category/accounting/reports?page=1&pageSize=200`
-  );
-  const reports = ((list.data as { data?: { id?: number; name?: string }[] })?.data ?? []);
-
-  const withHours: { id: unknown; name: unknown; hourFields: string[] }[] = [];
-  const allReports: { id: unknown; name: unknown }[] = [];
-
-  for (const r of reports) {
-    allReports.push({ id: r.id, name: r.name });
-    const def = await get(
-      `/reporting/v2/tenant/${stId}/report-category/accounting/reports/${r.id}`
-    );
-    const fields =
-      ((def.data as { fields?: { name?: string; label?: string }[] })?.fields ?? []);
-    const hourFields = fields
-      .filter((f) => /hour|billable/i.test(`${f.name ?? ""} ${f.label ?? ""}`))
-      .map((f) => `${f.name} (${f.label})`);
-    if (hourFields.length) withHours.push({ id: r.id, name: r.name, hourFields });
+  async function count(path: string) {
+    const r = await get(path);
+    const d = r.data as { totalCount?: number; title?: string };
+    return { status: r.status, totalCount: d?.totalCount ?? null, error: d?.title ?? null };
   }
 
-  // ---- Do invoice items expose hours directly? ----------------------------
-  const invoiceSample = await get(
-    `/accounting/v2/tenant/${stId}/invoices?page=1&pageSize=1&includeTotal=true`
+  const inv = `/accounting/v2/tenant/${stId}/invoices`;
+
+  // ---- A. The promising reports, fetched directly -------------------------
+  const soldHoursReport = await get(
+    `/reporting/v2/tenant/${stId}/report-category/accounting/reports/87634674`
+  );
+  const hoursReport = await get(
+    `/reporting/v2/tenant/${stId}/report-category/accounting/reports/31940251`
+  );
+  const invoiceItemReport = await get(
+    `/reporting/v2/tenant/${stId}/report-category/accounting/reports/3300`
+  );
+
+  // ---- B. Which invoice date filter is real? -----------------------------
+  const filters = {
+    baseline: await count(`${inv}?pageSize=1&includeTotal=true`),
+    invoicedOnOrAfter_2100: await count(
+      `${inv}?invoicedOnOrAfter=2100-01-01T00:00:00Z&pageSize=1&includeTotal=true`
+    ),
+    invoiceDateOnOrAfter_2100: await count(
+      `${inv}?invoiceDateOnOrAfter=2100-01-01T00:00:00Z&pageSize=1&includeTotal=true`
+    ),
+    createdOnOrAfter_2100: await count(
+      `${inv}?createdOnOrAfter=2100-01-01T00:00:00Z&pageSize=1&includeTotal=true`
+    ),
+    modifiedOnOrAfter_2100: await count(
+      `${inv}?modifiedOnOrAfter=2100-01-01T00:00:00Z&pageSize=1&includeTotal=true`
+    ),
+  };
+
+  // ---- B2. Do RECENT invoice items actually carry soldHours? --------------
+  // Sorted newest-first so we see live data, not a 2025 import with null hours.
+  const recent = await get(`${inv}?page=1&pageSize=5&orderBy=invoiceDate&orderByDirection=desc`);
+  const recentItems = (
+    ((recent.data as { data?: { invoiceDate?: string; items?: unknown[] }[] })?.data ?? []).map(
+      (i) => ({
+        invoiceDate: i.invoiceDate,
+        items: (i.items ?? []).map((it) => {
+          const item = it as { skuName?: string; quantity?: string; soldHours?: unknown };
+          return { skuName: item.skuName, quantity: item.quantity, soldHours: item.soldHours };
+        }),
+      })
+    )
   );
 
   return NextResponse.json({
-    note: "reportsExposingHours: any accounting report carrying a billable-hours column — if one exists we can READ sold hours instead of recomputing, with no new ST scopes. invoiceSample: inspect an invoice's items for an hours/skuHours field as a fallback source.",
-    reportsExposingHours: withHours,
-    accountingReportsScanned: allReports.length,
-    allAccountingReports: allReports,
-    invoiceSample: invoiceSample.data,
+    note: "soldHoursReport/hoursReport/invoiceItemReport: if any returns parameters + fields, we can READ sold hours. invoiceDateFilters: a filter is REAL only if the 2100 probe returns 0. recentInvoiceItems: is soldHours actually populated on live invoices?",
+    soldHoursReport,
+    hoursReport,
+    invoiceItemReport,
+    invoiceDateFilters: filters,
+    recentInvoiceItems: recentItems,
   });
 }
