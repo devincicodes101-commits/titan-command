@@ -6,13 +6,11 @@ import { decrypt } from "@/lib/crypto";
 const AUTH_URL = "https://auth.servicetitan.io/connect/token";
 const API_BASE = "https://api.servicetitan.io";
 
-// Decisive test. Deriving sold hours ourselves lands ~15-20% below report 414's
-// 215.13 on every date basis (invoice 180.25, completion 172.63), so exact parity
-// needs 414 read directly. The category LISTING for non-accounting categories
-// came back empty, but that never proves a direct GET/RUN of 414 fails — only a
-// listing did. So hit report 414 directly across candidate categories: a 200 with
-// data means we can read the exact number; a 403 is hard proof the scope is the
-// blocker, to hand the client.
+// Goal: reproduce ST's Call Center report "Calls Taken" (100 for Jul 1-16) from
+// raw Telecom data, since that report's category is scope-blocked (same 403 as
+// 414). The board currently counts ALL inbound calls (~113), which is broader.
+// So pull the calls, dump a sample's fields, and tally by every categorical field
+// — one of those buckets (or a combination) should total 100.
 export async function GET() {
   const session = await auth();
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -38,69 +36,60 @@ export async function GET() {
     }),
   });
   const { access_token } = await tokenRes.json();
-  const authH = { Authorization: `Bearer ${access_token}`, "ST-App-Key": cred.app_key };
+  const headers = { Authorization: `Bearer ${access_token}`, "ST-App-Key": cred.app_key };
   const stId = cred.st_tenant_id;
 
-  const categories = [
-    "operations",
-    "business-unit-dashboard",
-    "technician-dashboard",
-    "sold-by",
-    "technician",
-    "marketing",
-    "accounting",
-  ];
+  // Local (Vancouver, UTC-7) window: Jul 1 00:00 -> Jul 16 23:59.
+  const from = "2026-07-01T07:00:00Z";
+  const to = "2026-07-17T06:59:59Z";
+  const base = `/telecom/v2/tenant/${stId}/calls?createdOnOrAfter=${from}&createdOnOrBefore=${to}`;
 
-  const definitionByCategory: Record<string, unknown> = {};
-  let goodCategory: string | null = null;
-  let goodParams: { name: string; isRequired?: boolean; dataType?: string }[] = [];
-
-  for (const cat of categories) {
-    const res = await fetch(
-      `${API_BASE}/reporting/v2/tenant/${stId}/report-category/${cat}/reports/414`,
-      { headers: authH }
-    );
+  async function get(path: string) {
+    const res = await fetch(`${API_BASE}${path}`, { headers });
     const body = await res.text();
-    let parsed: unknown = body.slice(0, 300);
     try {
-      parsed = JSON.parse(body);
+      return { status: res.status, data: JSON.parse(body) };
     } catch {
-      /* keep text */
-    }
-    definitionByCategory[cat] = { status: res.status, data: res.status === 200 ? parsed : (parsed as { title?: string })?.title ?? parsed };
-    if (res.status === 200 && !goodCategory) {
-      goodCategory = cat;
-      goodParams = ((parsed as { parameters?: { name: string; isRequired?: boolean; dataType?: string }[] })?.parameters) ?? [];
+      return { status: res.status, data: body.slice(0, 200) };
     }
   }
 
-  // If a category served the definition, RUN 414 for Jul 1-15 and read the
-  // Item Billable Hours column so we can confirm it equals 215.13.
-  let runResult: unknown = "not attempted — no readable category";
-  if (goodCategory) {
-    const params: { name: string; value: unknown }[] = [];
-    for (const p of goodParams) {
-      if (p.name === "From") params.push({ name: "From", value: "2026-07-01" });
-      else if (p.name === "To") params.push({ name: "To", value: "2026-07-15" });
-      else if (p.name === "DateType") params.push({ name: "DateType", value: 0 });
-      else if (p.isRequired) params.push({ name: p.name, value: null });
-    }
-    const res = await fetch(
-      `${API_BASE}/reporting/v2/tenant/${stId}/report-category/${goodCategory}/reports/414/data?page=1&pageSize=100`,
-      { method: "POST", headers: { ...authH, "Content-Type": "application/json" }, body: JSON.stringify({ parameters: params }) }
-    );
-    const body = await res.text();
-    try {
-      runResult = { status: res.status, data: JSON.parse(body) };
-    } catch {
-      runResult = { status: res.status, data: body.slice(0, 400) };
+  // Total inbound (what the board counts today).
+  const totalInbound = await get(`${base}&direction=Inbound&pageSize=1&includeTotal=true`);
+
+  // Page all calls in-window (both directions) and tally categorical fields.
+  const all: Record<string, unknown>[] = [];
+  let page = 1;
+  let hasMore = true;
+  while (hasMore && page <= 40) {
+    const r = await get(`${base}&page=${page}&pageSize=200`);
+    const rows = (r.data as { data?: Record<string, unknown>[]; hasMore?: boolean })?.data ?? [];
+    all.push(...rows);
+    hasMore = Boolean((r.data as { hasMore?: boolean })?.hasMore);
+    page++;
+  }
+
+  // Tally the value of every categorical-looking field, split by direction.
+  const tallies: Record<string, Record<string, number>> = {};
+  const bump = (field: string, val: unknown) => {
+    const key = val === null || val === undefined ? "(null)" : String(val);
+    (tallies[field] ??= {})[key] = ((tallies[field] ??= {})[key] ?? 0) + 1;
+  };
+  for (const c of all) {
+    const dir = String(c.direction ?? "?");
+    for (const [k, v] of Object.entries(c)) {
+      if (v !== null && typeof v === "object") continue; // skip nested objects
+      if (["id", "from", "to", "duration", "createdOn", "receivedOn"].includes(k)) continue;
+      bump(k, v);
+      bump(`${k}__${dir}`, v);
     }
   }
 
   return NextResponse.json({
-    note: "If any category shows status 200, report 414 IS readable and we can print the exact 215.13. A 403/404 everywhere is proof the Reporting scope is the blocker. runResult includes the report's fields order + rows — find the Item Billable Hours column and confirm 215.13.",
-    readableCategory: goodCategory,
-    definitionByCategory,
-    runResult,
+    note: "Find the bucket (or combination) that totals 100 = ST 'Calls Taken'. totalInboundCount is what the board shows now. sampleCall shows all available fields. tallies breaks down every categorical field, with __Inbound / __Outbound splits.",
+    totalInboundCount: (totalInbound.data as { totalCount?: number })?.totalCount ?? null,
+    callsPulled: all.length,
+    sampleCall: all[0] ?? null,
+    tallies,
   });
 }
