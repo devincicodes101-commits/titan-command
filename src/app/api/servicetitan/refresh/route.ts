@@ -41,6 +41,9 @@ export async function POST() {
     clientSecretEncrypted: stCred.client_secret_encrypted,
   };
 
+  // TODO: source per-tenant from ServiceTitan settings; override via env for now.
+  const TENANT_TIME_ZONE = process.env.ST_TENANT_TIMEZONE ?? "America/Los_Angeles";
+
   const now = new Date();
   const today = isoDate(now);
   const firstOfMonth = isoDate(new Date(now.getFullYear(), now.getMonth(), 1));
@@ -58,7 +61,7 @@ export async function POST() {
 
   const [businessUnits, callsRan, closeRateByBU, todaysOpportunities] = await Promise.all([
     getBusinessUnits(creds),
-    getCallsRan(creds, firstOfMonth, today),
+    getCallsRan(creds, firstOfMonth, today, TENANT_TIME_ZONE),
     getCloseRateByBU(creds, firstOfMonth, today),
     getTodaysOpportunities(creds, today),
   ]);

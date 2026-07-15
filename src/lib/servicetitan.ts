@@ -156,6 +156,19 @@ export interface STRevenueSummary {
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
 
+// Converts a local calendar-day boundary in the tenant's timezone to the exact
+// UTC instant. ServiceTitan REPORTS run in the tenant's local timezone, but the
+// Telecom API filters on UTC — so without this, the call window is shifted by the
+// timezone offset and the count won't match the Call Center report.
+function localBoundaryToUtc(date: string, endOfDay: boolean, timeZone: string): string {
+  const time = endOfDay ? "23:59:59" : "00:00:00";
+  const asUtc = new Date(`${date}T${time}Z`);
+  const inTz = new Date(asUtc.toLocaleString("en-US", { timeZone }));
+  const inUtc = new Date(asUtc.toLocaleString("en-US", { timeZone: "UTC" }));
+  const offsetMs = inUtc.getTime() - inTz.getTime();
+  return new Date(asUtc.getTime() + offsetMs).toISOString();
+}
+
 // "Invoice Summary by Business Unit" (report 3201, accounting category). IMPORTANT:
 // this report can only show invoices that have a Business Unit assigned -- any
 // invoice without one is silently dropped, even if it has real revenue. Verified
@@ -254,11 +267,17 @@ export interface STCloseRateByBU {
 export async function getCallsRan(
   creds: STCredentials,
   from: string,
-  to: string
+  to: string,
+  timeZone: string
 ): Promise<number> {
+  const after = localBoundaryToUtc(from, false, timeZone); // local start-of-day -> UTC
+  const before = localBoundaryToUtc(to, true, timeZone); // local end-of-day -> UTC
   const data = await stFetch(
     creds,
-    `/telecom/v2/tenant/${creds.stTenantId}/calls?createdOnOrAfter=${from}T00:00:00Z&createdOnOrBefore=${to}T23:59:59Z&direction=Inbound&pageSize=1&includeTotal=true`
+    `/telecom/v2/tenant/${creds.stTenantId}/calls` +
+      `?createdOnOrAfter=${encodeURIComponent(after)}` +
+      `&createdOnOrBefore=${encodeURIComponent(before)}` +
+      `&direction=Inbound&pageSize=1&includeTotal=true`
   );
   return data.totalCount ?? 0;
 }
