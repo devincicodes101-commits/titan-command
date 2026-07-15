@@ -6,11 +6,11 @@ import { decrypt } from "@/lib/crypto";
 const AUTH_URL = "https://auth.servicetitan.io/connect/token";
 const API_BASE = "https://api.servicetitan.io";
 
-// v9 showed the real call fields are nested in a `leadCall` object, so the flat
-// tally was useless. The sample was callType "Excused" (reason "Hang up"). ST's
-// "Calls Taken" (100) almost certainly drops junk types like Excused. Board = 113
-// inbound. Tally the NESTED callType/reason/direction to find which types sum to
-// exactly 100 — that's the filter to apply so the board matches the report.
+// Board Calls Ran = 97 inbound; ST report "Calls Taken" = 100. Window boundaries
+// already match (Jul 1-16 local), so the 3-call gap is likely the DATE FIELD the
+// report counts by (receivedOn vs createdOn) or live drift. Probe: which date
+// filters are real (year-2100 -> 0), then count nested-inbound under each date
+// field and a few window variants to see which totals 100.
 export async function GET() {
   const session = await auth();
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -38,10 +38,7 @@ export async function GET() {
   const { access_token } = await tokenRes.json();
   const headers = { Authorization: `Bearer ${access_token}`, "ST-App-Key": cred.app_key };
   const stId = cred.st_tenant_id;
-
-  const from = "2026-07-01T07:00:00Z";
-  const to = "2026-07-17T06:59:59Z";
-  const base = `/telecom/v2/tenant/${stId}/calls?createdOnOrAfter=${from}&createdOnOrBefore=${to}`;
+  const callsBase = `/telecom/v2/tenant/${stId}/calls`;
 
   async function get(path: string) {
     const res = await fetch(`${API_BASE}${path}`, { headers });
@@ -49,55 +46,60 @@ export async function GET() {
     try {
       return { status: res.status, data: JSON.parse(body) };
     } catch {
-      return { status: res.status, data: body.slice(0, 200) };
+      return { status: res.status, data: body.slice(0, 150) };
     }
   }
-
-  const all: Record<string, unknown>[] = [];
-  let page = 1;
-  let hasMore = true;
-  while (hasMore && page <= 40) {
-    const r = await get(`${base}&page=${page}&pageSize=200`);
-    const rows = (r.data as { data?: Record<string, unknown>[]; hasMore?: boolean })?.data ?? [];
-    all.push(...rows);
-    hasMore = Boolean((r.data as { hasMore?: boolean })?.hasMore);
-    page++;
+  async function totalCount(query: string) {
+    const r = await get(`${callsBase}?${query}&pageSize=1&includeTotal=true`);
+    return (r.data as { totalCount?: number })?.totalCount ?? null;
   }
-
-  const inc = (o: Record<string, number>, k: string) => {
-    o[k] = (o[k] ?? 0) + 1;
-  };
-  const byCallType: Record<string, number> = {};
-  const byCallTypeInbound: Record<string, number> = {};
-  const byReasonInbound: Record<string, number> = {};
-  const byDirection: Record<string, number> = {};
-  let inbound = 0;
-
-  for (const rec of all) {
-    // The call payload lives under leadCall (or bookingCall on booking records).
-    const inner =
-      (rec.leadCall as Record<string, unknown>) ??
-      (rec.bookingCall as Record<string, unknown>) ??
-      rec;
-    const dir = String(inner.direction ?? "?");
-    const callType = String(inner.callType ?? "(none)");
-    const reason = ((inner.reason as { name?: string } | null)?.name) ?? "(none)";
-    inc(byDirection, dir);
-    inc(byCallType, callType);
-    if (dir === "Inbound") {
-      inbound++;
-      inc(byCallTypeInbound, callType);
-      inc(byReasonInbound, reason);
+  // Page a window and count calls whose nested direction is Inbound.
+  async function countInbound(query: string) {
+    let inbound = 0;
+    let all = 0;
+    let page = 1;
+    let hasMore = true;
+    while (hasMore && page <= 40) {
+      const r = await get(`${callsBase}?${query}&page=${page}&pageSize=500`);
+      const rows = (r.data as { data?: Record<string, unknown>[]; hasMore?: boolean })?.data ?? [];
+      for (const rec of rows) {
+        all++;
+        const inner =
+          (rec.leadCall as { direction?: unknown } | null) ??
+          (rec.bookingCall as { direction?: unknown } | null) ??
+          (rec as { direction?: unknown });
+        if (inner?.direction === "Inbound") inbound++;
+      }
+      hasMore = Boolean((r.data as { hasMore?: boolean })?.hasMore);
+      page++;
     }
+    return { inbound, all };
   }
+
+  const start = "2026-07-01T07:00:00Z"; // Jul 1 00:00 local
+  const end = "2026-07-17T06:59:59Z"; // Jul 16 23:59 local
+  const nowIso = new Date().toISOString();
 
   return NextResponse.json({
-    note: "inbound total should be 113. Find which callType(s) among inbound sum to 100 = ST 'Calls Taken'. e.g. if Excused=13, then all-inbound-minus-Excused = 100.",
-    totalRecords: all.length,
-    inboundTotal: inbound,
-    byDirection,
-    byCallTypeInbound,
-    byReasonInbound,
-    byCallTypeAllDirections: byCallType,
+    note: "target = ST 'Calls Taken' 100. Find the variant whose inbound == 100. filterReality: a date filter is real only if year-2100 -> 0.",
+    filterReality: {
+      createdOnOrAfter_2100: await totalCount("createdOnOrAfter=2100-01-01T00:00:00Z"),
+      receivedOnOrAfter_2100: await totalCount("receivedOnOrAfter=2100-01-01T00:00:00Z"),
+      modifiedOnOrAfter_2100: await totalCount("modifiedOnOrAfter=2100-01-01T00:00:00Z"),
+    },
+    counts: {
+      byCreatedOn_localWindow: await countInbound(
+        `createdOnOrAfter=${start}&createdOnOrBefore=${end}`
+      ),
+      byReceivedOn_localWindow: await countInbound(
+        `receivedOnOrAfter=${start}&receivedOnOrBefore=${end}`
+      ),
+      byModifiedOn_localWindow: await countInbound(
+        `modifiedOnOrAfter=${start}&modifiedOnOrBefore=${end}`
+      ),
+      byCreatedOn_untilNow: await countInbound(
+        `createdOnOrAfter=${start}&createdOnOrBefore=${nowIso}`
+      ),
+    },
   });
 }
