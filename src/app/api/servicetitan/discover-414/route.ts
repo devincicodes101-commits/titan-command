@@ -6,11 +6,11 @@ import { decrypt } from "@/lib/crypto";
 const AUTH_URL = "https://auth.servicetitan.io/connect/token";
 const API_BASE = "https://api.servicetitan.io";
 
-// Goal: reproduce ST's Call Center report "Calls Taken" (100 for Jul 1-16) from
-// raw Telecom data, since that report's category is scope-blocked (same 403 as
-// 414). The board currently counts ALL inbound calls (~113), which is broader.
-// So pull the calls, dump a sample's fields, and tally by every categorical field
-// — one of those buckets (or a combination) should total 100.
+// v9 showed the real call fields are nested in a `leadCall` object, so the flat
+// tally was useless. The sample was callType "Excused" (reason "Hang up"). ST's
+// "Calls Taken" (100) almost certainly drops junk types like Excused. Board = 113
+// inbound. Tally the NESTED callType/reason/direction to find which types sum to
+// exactly 100 — that's the filter to apply so the board matches the report.
 export async function GET() {
   const session = await auth();
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -39,7 +39,6 @@ export async function GET() {
   const headers = { Authorization: `Bearer ${access_token}`, "ST-App-Key": cred.app_key };
   const stId = cred.st_tenant_id;
 
-  // Local (Vancouver, UTC-7) window: Jul 1 00:00 -> Jul 16 23:59.
   const from = "2026-07-01T07:00:00Z";
   const to = "2026-07-17T06:59:59Z";
   const base = `/telecom/v2/tenant/${stId}/calls?createdOnOrAfter=${from}&createdOnOrBefore=${to}`;
@@ -54,10 +53,6 @@ export async function GET() {
     }
   }
 
-  // Total inbound (what the board counts today).
-  const totalInbound = await get(`${base}&direction=Inbound&pageSize=1&includeTotal=true`);
-
-  // Page all calls in-window (both directions) and tally categorical fields.
   const all: Record<string, unknown>[] = [];
   let page = 1;
   let hasMore = true;
@@ -69,27 +64,40 @@ export async function GET() {
     page++;
   }
 
-  // Tally the value of every categorical-looking field, split by direction.
-  const tallies: Record<string, Record<string, number>> = {};
-  const bump = (field: string, val: unknown) => {
-    const key = val === null || val === undefined ? "(null)" : String(val);
-    (tallies[field] ??= {})[key] = ((tallies[field] ??= {})[key] ?? 0) + 1;
+  const inc = (o: Record<string, number>, k: string) => {
+    o[k] = (o[k] ?? 0) + 1;
   };
-  for (const c of all) {
-    const dir = String(c.direction ?? "?");
-    for (const [k, v] of Object.entries(c)) {
-      if (v !== null && typeof v === "object") continue; // skip nested objects
-      if (["id", "from", "to", "duration", "createdOn", "receivedOn"].includes(k)) continue;
-      bump(k, v);
-      bump(`${k}__${dir}`, v);
+  const byCallType: Record<string, number> = {};
+  const byCallTypeInbound: Record<string, number> = {};
+  const byReasonInbound: Record<string, number> = {};
+  const byDirection: Record<string, number> = {};
+  let inbound = 0;
+
+  for (const rec of all) {
+    // The call payload lives under leadCall (or bookingCall on booking records).
+    const inner =
+      (rec.leadCall as Record<string, unknown>) ??
+      (rec.bookingCall as Record<string, unknown>) ??
+      rec;
+    const dir = String(inner.direction ?? "?");
+    const callType = String(inner.callType ?? "(none)");
+    const reason = ((inner.reason as { name?: string } | null)?.name) ?? "(none)";
+    inc(byDirection, dir);
+    inc(byCallType, callType);
+    if (dir === "Inbound") {
+      inbound++;
+      inc(byCallTypeInbound, callType);
+      inc(byReasonInbound, reason);
     }
   }
 
   return NextResponse.json({
-    note: "Find the bucket (or combination) that totals 100 = ST 'Calls Taken'. totalInboundCount is what the board shows now. sampleCall shows all available fields. tallies breaks down every categorical field, with __Inbound / __Outbound splits.",
-    totalInboundCount: (totalInbound.data as { totalCount?: number })?.totalCount ?? null,
-    callsPulled: all.length,
-    sampleCall: all[0] ?? null,
-    tallies,
+    note: "inbound total should be 113. Find which callType(s) among inbound sum to 100 = ST 'Calls Taken'. e.g. if Excused=13, then all-inbound-minus-Excused = 100.",
+    totalRecords: all.length,
+    inboundTotal: inbound,
+    byDirection,
+    byCallTypeInbound,
+    byReasonInbound,
+    byCallTypeAllDirections: byCallType,
   });
 }
