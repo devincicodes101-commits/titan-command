@@ -6,18 +6,16 @@ import { decrypt } from "@/lib/crypto";
 const AUTH_URL = "https://auth.servicetitan.io/connect/token";
 const API_BASE = "https://api.servicetitan.io";
 
-// Read-only probe. ServiceTitan silently ignores unknown query params instead of
-// erroring, so every filter must be proven to actually narrow results before it
-// is trusted. The technique: pass an absurd year-2100 bound — a real filter
-// returns 0, an ignored one returns the unfiltered total.
+// Sold hours must come from JOBS, not estimates: report 414 shows 67 completed
+// jobs against only 17 sold estimates, so ~50 jobs (75%) were invoiced with no
+// estimate at all. Their hours are invisible to an estimate-based calculation —
+// which is the whole 126.44 vs 215.13 gap, and no estimate-query fix can close it.
 //
-// Already established by v2:
-//   scheduledOnOrAfter            -> IGNORED (2100 still returned 156)
-//   firstAppointmentStartsOnOrAfter -> real (2100 returned 0)
-//   appointmentStartsOnOrAfter      -> real (2100 returned 0)
-//
-// Open: the companion upper bounds, and whether soldAfter/soldBefore are real
-// (sold hours must move off the created-date basis, which reads 43% low).
+// Report 414 itself is unreachable (only the accounting category lists reports).
+// But a report can carry a billable-hours COLUMN without saying so in its name,
+// and we have 39 accounting reports. So scan every one's `fields` for hours —
+// if any exposes them, sold hours can be READ rather than recomputed, with no new
+// ST scopes needed. Also checks whether invoice items carry hours directly.
 export async function GET() {
   const session = await auth();
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -46,60 +44,48 @@ export async function GET() {
   const headers = { Authorization: `Bearer ${access_token}`, "ST-App-Key": cred.app_key };
   const stId = cred.st_tenant_id;
 
-  // Returns just enough to judge a filter: status + how many rows it matched.
-  async function count(path: string) {
+  async function get(path: string) {
     const res = await fetch(`${API_BASE}${path}`, { headers });
     const body = await res.text();
     try {
-      const j = JSON.parse(body);
-      return { status: res.status, totalCount: j.totalCount ?? null, error: j.title ?? null };
+      return { status: res.status, data: JSON.parse(body) };
     } catch {
-      return { status: res.status, totalCount: null, error: body.slice(0, 200) };
+      return { status: res.status, data: body };
     }
   }
 
-  const jobs = `/jpm/v2/tenant/${stId}/jobs`;
-  const est = `/sales/v2/tenant/${stId}/estimates`;
-  const sched = `&jobStatus=Scheduled&pageSize=1&includeTotal=true`;
-  const p1 = `pageSize=1&includeTotal=true`;
+  // ---- Scan every accounting report's FIELDS for anything hours-shaped -----
+  const list = await get(
+    `/reporting/v2/tenant/${stId}/report-category/accounting/reports?page=1&pageSize=200`
+  );
+  const reports = ((list.data as { data?: { id?: number; name?: string }[] })?.data ?? []);
 
-  // Local (America/Vancouver) day boundaries for today, 2026-07-15 => UTC.
-  const todayStart = "2026-07-15T07:00:00Z";
-  const tomorrowStart = "2026-07-16T07:00:00Z";
+  const withHours: { id: unknown; name: unknown; hourFields: string[] }[] = [];
+  const allReports: { id: unknown; name: unknown }[] = [];
+
+  for (const r of reports) {
+    allReports.push({ id: r.id, name: r.name });
+    const def = await get(
+      `/reporting/v2/tenant/${stId}/report-category/accounting/reports/${r.id}`
+    );
+    const fields =
+      ((def.data as { fields?: { name?: string; label?: string }[] })?.fields ?? []);
+    const hourFields = fields
+      .filter((f) => /hour|billable/i.test(`${f.name ?? ""} ${f.label ?? ""}`))
+      .map((f) => `${f.name} (${f.label})`);
+    if (hourFields.length) withHours.push({ id: r.id, name: r.name, hourFields });
+  }
+
+  // ---- Do invoice items expose hours directly? ----------------------------
+  const invoiceSample = await get(
+    `/accounting/v2/tenant/${stId}/invoices?page=1&pageSize=1&includeTotal=true`
+  );
 
   return NextResponse.json({
-    note: "A filter is REAL if the year-2100 probe returns 0. It is IGNORED if it returns the same total as the unfiltered baseline. todaysOpportunities_* are the candidate real counts for today — compare against the ST Dispatch Board.",
-
-    jobs_baseline_scheduled: await count(`${jobs}?${p1}&jobStatus=Scheduled`),
-
-    // Which upper-bound param name is real?
-    jobs_appointmentStartsBefore_1900: await count(
-      `${jobs}?appointmentStartsBefore=1900-01-01T00:00:00Z${sched}`
-    ),
-    jobs_firstAppointmentStartsBefore_1900: await count(
-      `${jobs}?firstAppointmentStartsBefore=1900-01-01T00:00:00Z${sched}`
-    ),
-
-    // The actual candidate answers for "Today's Opportunities".
-    todaysOpportunities_anyAppointmentToday: await count(
-      `${jobs}?appointmentStartsOnOrAfter=${todayStart}&appointmentStartsBefore=${tomorrowStart}${sched}`
-    ),
-    todaysOpportunities_firstAppointmentToday: await count(
-      `${jobs}?firstAppointmentStartsOnOrAfter=${todayStart}&firstAppointmentStartsBefore=${tomorrowStart}${sched}`
-    ),
-
-    // ---- Estimates: are the sold-date filters real? --------------------------
-    estimates_baseline: await count(`${est}?${p1}`),
-    estimates_soldAfter_2100: await count(`${est}?soldAfter=2100-01-01T00:00:00Z&${p1}`),
-    estimates_soldBefore_1900: await count(`${est}?soldBefore=1900-01-01T00:00:00Z&${p1}`),
-    estimates_soldOnOrAfter_2100_knownBad: await count(
-      `${est}?soldOnOrAfter=2100-01-01T00:00:00Z&${p1}`
-    ),
-    estimates_createdOnOrAfter_2100: await count(
-      `${est}?createdOnOrAfter=2100-01-01T00:00:00Z&${p1}`
-    ),
-    // Does a status filter exist, and is it real?
-    estimates_status_Sold: await count(`${est}?status=Sold&${p1}`),
-    estimates_activeOnly: await count(`${est}?active=True&${p1}`),
+    note: "reportsExposingHours: any accounting report carrying a billable-hours column — if one exists we can READ sold hours instead of recomputing, with no new ST scopes. invoiceSample: inspect an invoice's items for an hours/skuHours field as a fallback source.",
+    reportsExposingHours: withHours,
+    accountingReportsScanned: allReports.length,
+    allAccountingReports: allReports,
+    invoiceSample: invoiceSample.data,
   });
 }
