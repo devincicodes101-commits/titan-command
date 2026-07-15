@@ -292,9 +292,12 @@ export async function getCallsRan(
 export async function getCloseRateByBU(
   creds: STCredentials,
   from: string,
-  to: string
+  to: string,
+  timeZone: string
 ): Promise<Record<string, STCloseRateByBU>> {
   const token = await getAccessToken(creds);
+  const startMs = new Date(localBoundaryToUtc(from, false, timeZone)).getTime();
+  const endMs = new Date(localBoundaryToUtc(to, true, timeZone)).getTime();
 
   async function paginateEstimates(queryStr: string): Promise<Record<string, unknown>[]> {
     const out: Record<string, unknown>[] = [];
@@ -314,10 +317,33 @@ export async function getCloseRateByBU(
     return out;
   }
 
-  const [created, soldThisMonth] = await Promise.all([
+  // The Sales API's sold-date filters are `soldAfter`/`soldBefore` — NOT
+  // `soldOnOrAfter`. Unknown filters are silently ignored, so the old query
+  // returned EVERY estimate ever sold: MTD Sold Hours read 31,803 against a true
+  // 215.13 (ST report 414 "Item Billable Hours"), ~148x over. Both bounds are
+  // exclusive, so widen by 1s and let the in-code window check below be
+  // authoritative rather than trusting the API to honour the filter at all.
+  const soldAfter = new Date(startMs - 1000).toISOString();
+  const soldBefore = new Date(endMs + 1000).toISOString();
+
+  const [created, soldRaw] = await Promise.all([
     paginateEstimates(`createdOnOrAfter=${from}T00:00:00Z`),
-    paginateEstimates(`soldOnOrAfter=${from}T00:00:00Z`),
+    paginateEstimates(
+      `soldAfter=${encodeURIComponent(soldAfter)}&soldBefore=${encodeURIComponent(soldBefore)}`
+    ),
   ]);
+
+  // Defence in depth: never trust the filter to have been applied. `status.name`
+  // is a confirmed field (the close-rate logic below already relies on it), so a
+  // non-Sold estimate can never be counted as revenue again. The soldOn window is
+  // only enforced when the field is actually present and parseable.
+  const soldThisMonth = soldRaw.filter((est) => {
+    if ((est.status as { name?: string } | null)?.name !== "Sold") return false;
+    const soldOn = est.soldOn;
+    if (typeof soldOn !== "string") return true;
+    const t = new Date(soldOn).getTime();
+    return !Number.isFinite(t) || (t >= startMs && t <= endMs);
+  });
 
   // MTD Opps and close rate — from estimates created this month
   const oppsByBU: Record<string, { sold: number; dismissed: number; total: number }> = {};

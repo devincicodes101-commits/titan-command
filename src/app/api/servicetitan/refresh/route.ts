@@ -62,7 +62,7 @@ export async function POST() {
   const [businessUnits, callsRan, closeRateByBU, todaysOpportunities] = await Promise.all([
     getBusinessUnits(creds),
     getCallsRan(creds, firstOfMonth, today, TENANT_TIME_ZONE),
-    getCloseRateByBU(creds, firstOfMonth, today),
+    getCloseRateByBU(creds, firstOfMonth, today, TENANT_TIME_ZONE),
     getTodaysOpportunities(creds, today),
   ]);
 
