@@ -459,18 +459,24 @@ export async function getCloseRateByBU(
   // deriving these from the CREATED set instead read 43% low (121.65 vs 215.13).
   //
   // soldAfter/soldBefore are verified real (year-2100 -> 0, year-1900 -> 0).
-  // `soldOnOrAfter` — used here previously — is NOT a real filter: ST silently
-  // ignores unknown params, so it returned all 2,523 estimates ever, which at
-  // ~12.6h each is exactly the bogus 31,803 sold hours the board showed.
-  // Both bounds are exclusive, so widen by 1s and let the check below decide.
-  const shift = (iso: string, ms: number) =>
-    new Date(new Date(iso).getTime() + ms).toISOString();
-  const startMs = new Date(localStart(from)).getTime();
-  const endMs = new Date(localEnd(to)).getTime();
+  // `soldOnOrAfter` is NOT real: ST silently ignores unknown params, so it
+  // returned all 2,523 estimates ever — the bogus 31,803 sold hours.
+  //
+  // soldOn is DATE-ONLY (stored as UTC midnight), exactly like invoiceDate. So
+  // the tenant-local 07:00Z boundary silently dropped every estimate sold on the
+  // FIRST day of the range: an estimate sold Jul 1 is stamped Jul 1 00:00Z, which
+  // is *before* Jul 1 07:00Z. Validated against ST's "Opportunity and Estimate
+  // Follow Up" report (Sold On, Jul 1-16, HVAC-Sales): ST showed 7 estimates /
+  // $71,790.40, the board showed 6 / $66,132.40 — the missing $5,658.00 was sold
+  // on Jul 1. Compare plain YYYY-MM-DD, and bound the query on UTC midnight.
+  const dayStartUtc = new Date(`${from}T00:00:00Z`).getTime();
+  const dayEndUtc = new Date(`${to}T00:00:00Z`).getTime();
 
   const soldRaw = await paginateEstimates(
-    `soldAfter=${encodeURIComponent(shift(localStart(from), -1000))}` +
-      `&soldBefore=${encodeURIComponent(shift(localEnd(to), 1000))}`
+    // Both bounds are exclusive: step 1s below the from-date's midnight and a
+    // full day past the to-date, then let the in-code day check be authoritative.
+    `soldAfter=${encodeURIComponent(new Date(dayStartUtc - 1000).toISOString())}` +
+      `&soldBefore=${encodeURIComponent(new Date(dayEndUtc + 86400000).toISOString())}`
   );
 
   // Never trust a filter to have been applied — that assumption caused both the
@@ -479,8 +485,8 @@ export async function getCloseRateByBU(
     if ((est.status as { name?: string } | null)?.name !== "Sold") return false;
     const soldOn = est.soldOn;
     if (typeof soldOn !== "string") return true;
-    const t = new Date(soldOn).getTime();
-    return !Number.isFinite(t) || (t >= startMs && t <= endMs);
+    const day = soldOn.slice(0, 10); // date-only compare; no timezone shift
+    return day >= from && day <= to;
   });
 
   type BUAgg = {
