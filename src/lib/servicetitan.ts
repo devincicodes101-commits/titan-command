@@ -3,21 +3,28 @@ import { decrypt } from "./crypto";
 const AUTH_URL = "https://auth.servicetitan.io/connect/token";
 const API_BASE = "https://api.servicetitan.io";
 
-// Tenant timezone offset (hours behind UTC). Duncan BC = PDT = UTC-7 in summer.
-// Update to UTC-8 (PST) in winter when daylight saving ends.
-const TZ_OFFSET_HOURS = 7;
+// Tenant timezone. DST-aware — do NOT hardcode the UTC offset: it changes between
+// PDT (-7) and PST (-8), and a hardcoded value silently shifts every date-filtered
+// number by an hour when clocks change.
+export const TENANT_TZ = "America/Vancouver";
 
-// Converts a local date string (YYYY-MM-DD) to UTC midnight of that local day.
-function localStart(date: string): string {
-  return `${date}T${String(TZ_OFFSET_HOURS).padStart(2, "0")}:00:00Z`;
+// Converts a tenant-local calendar-day boundary (YYYY-MM-DD) to the exact UTC
+// instant, honouring DST at that date.
+function localBoundaryToUtc(date: string, endOfDay: boolean): string {
+  const time = endOfDay ? "23:59:59" : "00:00:00";
+  const asUtc = new Date(`${date}T${time}Z`);
+  const inTz = new Date(asUtc.toLocaleString("en-US", { timeZone: TENANT_TZ }));
+  const inUtc = new Date(asUtc.toLocaleString("en-US", { timeZone: "UTC" }));
+  const offsetMs = inUtc.getTime() - inTz.getTime();
+  return new Date(asUtc.getTime() + offsetMs).toISOString();
 }
 
-// Converts a local date string to UTC end-of-day (23:59:59 local = next day TZ_OFFSET-1:59:59 UTC).
+function localStart(date: string): string {
+  return localBoundaryToUtc(date, false);
+}
+
 function localEnd(date: string): string {
-  const d = new Date(date + "T00:00:00Z");
-  d.setDate(d.getDate() + 1);
-  const next = d.toISOString().slice(0, 10);
-  return `${next}T${String(TZ_OFFSET_HOURS - 1).padStart(2, "0")}:59:59Z`;
+  return localBoundaryToUtc(date, true);
 }
 
 export interface STCredentials {
