@@ -296,6 +296,63 @@ export async function getCallsRan(
 // MTD Sales $ / Sold Hours: based on estimates SOLD this month (revenue recognised
 // this month, including estimates written before the period and closed in it) —
 // this matches ServiceTitan's Sales report "Total Sales" column.
+// Sold hours come from INVOICE items, not estimates. ST report 414 shows 67
+// completed jobs against just 17 sold estimates — ~50 jobs (75%) are invoiced
+// with no estimate at all, so an estimate-based sum structurally cannot see their
+// hours. That was the whole gap: 126.44 against ST's 215.13, i.e. 88.69h spread
+// over ~50 jobs (~1.8h each, a routine service call).
+//
+// Invoice items expose soldHours directly and are job-based, so every job counts.
+// Verified populated on live invoices (e.g. "DIAPA" qty 1, soldHours 1 on Jul 15);
+// the nulls are legacy 2025 imports.
+//
+// Note the two dead ends: reports "Sold Hours" (87634674) and "Hours" (31940251)
+// are TIMESHEET reports despite their names — every field is clock time
+// (DurationDec, TimesheetActivity), which is what Reed explicitly says sold hours
+// is NOT. Report 3300 has Price/Quantity but no hours column.
+//
+// invoicedOnOrAfter is verified real (year-2100 probe -> 0). invoiceDateOnOrAfter
+// is NOT — it returns all 10,785 invoices — so it must never be used here.
+export async function getSoldHours(
+  creds: STCredentials,
+  from: string,
+  to: string
+): Promise<number> {
+  const token = await getAccessToken(creds);
+  let total = 0;
+  let page = 1;
+  let hasMore = true;
+
+  // invoiceDate is date-only (stored as UTC midnight, e.g. 2026-07-15T00:00:00Z),
+  // so compare plain YYYY-MM-DD. Applying the tenant-local 07:00Z offset here
+  // would silently drop the first day of the range.
+  while (hasMore) {
+    const res = await fetch(
+      `${API_BASE}/accounting/v2/tenant/${creds.stTenantId}/invoices` +
+        `?invoicedOnOrAfter=${from}T00:00:00Z&page=${page}&pageSize=200`,
+      { headers: { Authorization: `Bearer ${token}`, "ST-App-Key": creds.appKey } }
+    );
+    if (!res.ok) throw new Error(`Invoices error (${res.status}): ${await res.text()}`);
+    const json = await res.json();
+
+    for (const inv of (json.data ?? []) as {
+      invoiceDate?: unknown;
+      items?: { soldHours?: unknown; quantity?: unknown }[];
+    }[]) {
+      // Never trust the filter to have been applied — that assumption caused the
+      // 148x over-count and the 400 outage.
+      const day = typeof inv.invoiceDate === "string" ? inv.invoiceDate.slice(0, 10) : "";
+      if (day && (day < from || day > to)) continue;
+      for (const item of inv.items ?? []) {
+        total += (Number(item.soldHours) || 0) * (Number(item.quantity) || 0);
+      }
+    }
+    hasMore = json.hasMore ?? false;
+    page++;
+  }
+  return round2(total);
+}
+
 export async function getCloseRateByBU(
   creds: STCredentials,
   from: string,
