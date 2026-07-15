@@ -6,20 +6,14 @@ import { decrypt } from "@/lib/crypto";
 const AUTH_URL = "https://auth.servicetitan.io/connect/token";
 const API_BASE = "https://api.servicetitan.io";
 
-// Two viable sources for job-based sold hours finally surfaced, both inside the
-// accounting category we can already read (no new ST scopes needed):
+// Sold hours from invoice items landed at 180.25 vs report 414's 215.13. 414
+// measures Item Billable Hours by JOB COMPLETION date; the current fix filters by
+// invoice date, so a job completed in-window but invoiced earlier is missed.
 //
-//  A. Reports "Sold Hours" (87634674), "Hours" (31940251) and "Invoice Item
-//     Detail with Pricebook Information" (3300). The v4 field-scan skipped the
-//     first two — they returned no fields, so fetch their definitions directly
-//     and find out why (custom reports may need a different call).
-//  B. Invoice items carry a `soldHours` field outright. Invoices are job-based,
-//     so this counts the ~50 estimate-less jobs that estimates can never see.
-//     The one sampled invoice had soldHours: null, but it was a legacy imported
-//     record from Jan 2025 — check a RECENT invoice before drawing conclusions.
-//
-// Every date filter is probed with an absurd bound first: ST silently ignores
-// unknown params, so a filter that returns the unfiltered total is a fake.
+// This probe (a) checks whether the invoices endpoint has a real completion-date
+// filter (ST silently ignores unknown params, so year-2100 must return 0) and
+// (b) actually SUMS invoice-item soldHours for the current MTD window under each
+// candidate basis, so we can see which total equals 215.13 before wiring it in.
 export async function GET() {
   const session = await auth();
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -47,6 +41,7 @@ export async function GET() {
   const { access_token } = await tokenRes.json();
   const headers = { Authorization: `Bearer ${access_token}`, "ST-App-Key": cred.app_key };
   const stId = cred.st_tenant_id;
+  const inv = `/accounting/v2/tenant/${stId}/invoices`;
 
   async function get(path: string) {
     const res = await fetch(`${API_BASE}${path}`, { headers });
@@ -54,66 +49,52 @@ export async function GET() {
     try {
       return { status: res.status, data: JSON.parse(body) };
     } catch {
-      return { status: res.status, data: body.slice(0, 300) };
+      return { status: res.status, data: body.slice(0, 200) };
     }
   }
-  async function count(path: string) {
-    const r = await get(path);
+  async function count(query: string) {
+    const r = await get(`${inv}?${query}&pageSize=1&includeTotal=true`);
     const d = r.data as { totalCount?: number; title?: string };
     return { status: r.status, totalCount: d?.totalCount ?? null, error: d?.title ?? null };
   }
+  // Page every invoice matching `query` and sum item soldHours * qty.
+  async function sumSoldHours(query: string) {
+    let total = 0;
+    let invoices = 0;
+    let page = 1;
+    let hasMore = true;
+    while (hasMore && page <= 50) {
+      const r = await get(`${inv}?${query}&page=${page}&pageSize=200`);
+      const rows = (r.data as { data?: { items?: { soldHours?: unknown; quantity?: unknown }[] }[]; hasMore?: boolean })?.data ?? [];
+      for (const iv of rows) {
+        invoices++;
+        for (const it of iv.items ?? []) {
+          total += (Number(it.soldHours) || 0) * (Number(it.quantity) || 0);
+        }
+      }
+      hasMore = Boolean((r.data as { hasMore?: boolean })?.hasMore);
+      page++;
+    }
+    return { total: Math.round(total * 100) / 100, invoices };
+  }
 
-  const inv = `/accounting/v2/tenant/${stId}/invoices`;
-
-  // ---- A. The promising reports, fetched directly -------------------------
-  const soldHoursReport = await get(
-    `/reporting/v2/tenant/${stId}/report-category/accounting/reports/87634674`
-  );
-  const hoursReport = await get(
-    `/reporting/v2/tenant/${stId}/report-category/accounting/reports/31940251`
-  );
-  const invoiceItemReport = await get(
-    `/reporting/v2/tenant/${stId}/report-category/accounting/reports/3300`
-  );
-
-  // ---- B. Which invoice date filter is real? -----------------------------
-  const filters = {
-    baseline: await count(`${inv}?pageSize=1&includeTotal=true`),
-    invoicedOnOrAfter_2100: await count(
-      `${inv}?invoicedOnOrAfter=2100-01-01T00:00:00Z&pageSize=1&includeTotal=true`
-    ),
-    invoiceDateOnOrAfter_2100: await count(
-      `${inv}?invoiceDateOnOrAfter=2100-01-01T00:00:00Z&pageSize=1&includeTotal=true`
-    ),
-    createdOnOrAfter_2100: await count(
-      `${inv}?createdOnOrAfter=2100-01-01T00:00:00Z&pageSize=1&includeTotal=true`
-    ),
-    modifiedOnOrAfter_2100: await count(
-      `${inv}?modifiedOnOrAfter=2100-01-01T00:00:00Z&pageSize=1&includeTotal=true`
-    ),
-  };
-
-  // ---- B2. Do RECENT invoice items actually carry soldHours? --------------
-  // Sorted newest-first so we see live data, not a 2025 import with null hours.
-  const recent = await get(`${inv}?page=1&pageSize=5&orderBy=invoiceDate&orderByDirection=desc`);
-  const recentItems = (
-    ((recent.data as { data?: { invoiceDate?: string; items?: unknown[] }[] })?.data ?? []).map(
-      (i) => ({
-        invoiceDate: i.invoiceDate,
-        items: (i.items ?? []).map((it) => {
-          const item = it as { skuName?: string; quantity?: string; soldHours?: unknown };
-          return { skuName: item.skuName, quantity: item.quantity, soldHours: item.soldHours };
-        }),
-      })
-    )
-  );
+  const from = "2026-07-01";
+  const toExclusive = "2026-07-16"; // completedOnOrBefore is inclusive of the day; use next-day floor where needed
 
   return NextResponse.json({
-    note: "soldHoursReport/hoursReport/invoiceItemReport: if any returns parameters + fields, we can READ sold hours. invoiceDateFilters: a filter is REAL only if the 2100 probe returns 0. recentInvoiceItems: is soldHours actually populated on live invoices?",
-    soldHoursReport,
-    hoursReport,
-    invoiceItemReport,
-    invoiceDateFilters: filters,
-    recentInvoiceItems: recentItems,
+    note: "filterReality: a completion-date filter is REAL only if its year-2100 probe returns 0. soldHoursTotals: whichever total equals report 414's 215.13 is the correct basis to ship.",
+    filterReality: {
+      completedOnOrAfter_2100: await count("completedOnOrAfter=2100-01-01T00:00:00Z"),
+      completedOnOrBefore_1900: await count("completedOnOrBefore=1900-01-01T00:00:00Z"),
+      jobCompletedOnOrAfter_2100: await count("jobCompletedOnOrAfter=2100-01-01T00:00:00Z"),
+    },
+    soldHoursTotals: {
+      byInvoiceDate_current: await sumSoldHours(
+        `invoicedOnOrAfter=${from}T00:00:00Z&invoicedOnOrBefore=${toExclusive}T06:59:59Z`
+      ),
+      byCompletedDate: await sumSoldHours(
+        `completedOnOrAfter=${from}T00:00:00Z&completedOnOrBefore=${toExclusive}T06:59:59Z`
+      ),
+    },
   });
 }
