@@ -237,14 +237,35 @@ export async function getTodaysOpportunities(
   creds: STCredentials,
   today: string
 ): Promise<number> {
-  const data = await stFetch(
-    creds,
-    `/jpm/v2/tenant/${creds.stTenantId}/jobs` +
-      `?appointmentStartsOnOrAfter=${localStart(today)}` +
-      `&appointmentStartsBefore=${localEnd(today)}` +
-      `&jobStatus=Scheduled&pageSize=1&includeTotal=true`
-  );
-  return data.totalCount ?? 0;
+  // Every ACTIVE job with an appointment today (client-confirmed definition,
+  // all business units). The old query counted whole-job jobStatus=Scheduled,
+  // which returned 1 because it dropped multi-visit jobs already in progress —
+  // the Dispatch Board had 61 jobs on it today (57 active). The jobs endpoint
+  // returns each job once even with multiple appointments, so no manual dedup;
+  // appointmentStartsOnOrAfter / appointmentStartsBefore are both verified real.
+  // jobStatus can't express "not X", so page and exclude terminal states in code.
+  const token = await getAccessToken(creds);
+  const terminal = new Set(["Canceled", "Completed"]);
+  let count = 0;
+  let page = 1;
+  let hasMore = true;
+  while (hasMore) {
+    const res = await fetch(
+      `${API_BASE}/jpm/v2/tenant/${creds.stTenantId}/jobs` +
+        `?appointmentStartsOnOrAfter=${localStart(today)}` +
+        `&appointmentStartsBefore=${localEnd(today)}` +
+        `&page=${page}&pageSize=500`,
+      { headers: { Authorization: `Bearer ${token}`, "ST-App-Key": creds.appKey } }
+    );
+    if (!res.ok) throw new Error(`Jobs error (${res.status}): ${await res.text()}`);
+    const json = await res.json();
+    for (const job of (json.data ?? []) as { jobStatus?: unknown }[]) {
+      if (!terminal.has(String(job.jobStatus))) count++;
+    }
+    hasMore = json.hasMore ?? false;
+    page++;
+  }
+  return count;
 }
 
 // Counts completed jobs for one business unit using the API's own totalCount,
