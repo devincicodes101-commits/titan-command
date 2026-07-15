@@ -237,33 +237,53 @@ export async function getTodaysOpportunities(
   creds: STCredentials,
   today: string
 ): Promise<number> {
-  // Every ACTIVE job with an appointment today (client-confirmed definition,
-  // all business units). The old query counted whole-job jobStatus=Scheduled,
-  // which returned 1 because it dropped multi-visit jobs already in progress —
-  // the Dispatch Board had 61 jobs on it today (57 active). The jobs endpoint
-  // returns each job once even with multiple appointments, so no manual dedup;
-  // appointmentStartsOnOrAfter / appointmentStartsBefore are both verified real.
-  // jobStatus can't express "not X", so page and exclude terminal states in code.
+  // Every ACTIVE job with an appointment today (client-confirmed: all business
+  // units, Scheduled + In Progress, excluding Canceled/Completed).
+  //
+  // Source is the APPOINTMENTS endpoint, not the jobs endpoint. The jobs
+  // endpoint's appointmentStartsOnOrAfter filters on a job's FIRST appointment,
+  // so multi-visit jobs whose today-visit isn't their first are dropped — it
+  // returned 5 while the Dispatch Board had 61 jobs. The appointments endpoint's
+  // startsOnOrAfter catches every appointment today; dedupe to jobs and exclude
+  // terminal states in code (jobStatus can't express "not X").
   const token = await getAccessToken(creds);
-  const terminal = new Set(["Canceled", "Completed"]);
-  let count = 0;
+  const headers = { Authorization: `Bearer ${token}`, "ST-App-Key": creds.appKey };
+
+  // 1. Every appointment starting today -> the set of jobs on the board.
+  const jobIds = new Set<number>();
   let page = 1;
   let hasMore = true;
   while (hasMore) {
     const res = await fetch(
-      `${API_BASE}/jpm/v2/tenant/${creds.stTenantId}/jobs` +
-        `?appointmentStartsOnOrAfter=${localStart(today)}` +
-        `&appointmentStartsBefore=${localEnd(today)}` +
+      `${API_BASE}/jpm/v2/tenant/${creds.stTenantId}/appointments` +
+        `?startsOnOrAfter=${localStart(today)}&startsOnOrBefore=${localEnd(today)}` +
         `&page=${page}&pageSize=500`,
-      { headers: { Authorization: `Bearer ${token}`, "ST-App-Key": creds.appKey } }
+      { headers }
+    );
+    if (!res.ok) throw new Error(`Appointments error (${res.status}): ${await res.text()}`);
+    const json = await res.json();
+    for (const appt of (json.data ?? []) as { jobId?: unknown }[]) {
+      if (typeof appt.jobId === "number") jobIds.add(appt.jobId);
+    }
+    hasMore = json.hasMore ?? false;
+    page++;
+  }
+
+  // 2. Resolve unique jobs (batched) and count the active ones.
+  const terminal = new Set(["Canceled", "Completed"]);
+  const ids = [...jobIds];
+  let count = 0;
+  for (let i = 0; i < ids.length; i += 50) {
+    const chunk = ids.slice(i, i + 50).join(",");
+    const res = await fetch(
+      `${API_BASE}/jpm/v2/tenant/${creds.stTenantId}/jobs?ids=${chunk}&pageSize=50`,
+      { headers }
     );
     if (!res.ok) throw new Error(`Jobs error (${res.status}): ${await res.text()}`);
     const json = await res.json();
     for (const job of (json.data ?? []) as { jobStatus?: unknown }[]) {
       if (!terminal.has(String(job.jobStatus))) count++;
     }
-    hasMore = json.hasMore ?? false;
-    page++;
   }
   return count;
 }
