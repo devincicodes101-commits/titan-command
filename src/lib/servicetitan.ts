@@ -282,11 +282,35 @@ export async function getCallsRan(
   from: string,
   to: string
 ): Promise<number> {
-  const data = await stFetch(
-    creds,
-    `/telecom/v2/tenant/${creds.stTenantId}/calls?createdOnOrAfter=${localStart(from)}&createdOnOrBefore=${localEnd(to)}&direction=Inbound&pageSize=1&includeTotal=true`
-  );
-  return data.totalCount ?? 0;
+  // The Telecom API's `direction=Inbound` filter is silently ignored — it
+  // returns every call, so the old totalCount read 113 (97 inbound + 16 outbound)
+  // vs the ST Call Center report's ~100 "Calls Taken". Page the calls and count
+  // inbound in code instead. The call payload is nested under leadCall (or
+  // bookingCall on booking records), so read direction from there.
+  const token = await getAccessToken(creds);
+  let inbound = 0;
+  let page = 1;
+  let hasMore = true;
+  while (hasMore) {
+    const res = await fetch(
+      `${API_BASE}/telecom/v2/tenant/${creds.stTenantId}/calls` +
+        `?createdOnOrAfter=${localStart(from)}&createdOnOrBefore=${localEnd(to)}` +
+        `&page=${page}&pageSize=500`,
+      { headers: { Authorization: `Bearer ${token}`, "ST-App-Key": creds.appKey } }
+    );
+    if (!res.ok) throw new Error(`Calls error (${res.status}): ${await res.text()}`);
+    const json = await res.json();
+    for (const rec of (json.data ?? []) as Record<string, unknown>[]) {
+      const inner =
+        (rec.leadCall as { direction?: unknown } | null) ??
+        (rec.bookingCall as { direction?: unknown } | null) ??
+        (rec as { direction?: unknown });
+      if (inner?.direction === "Inbound") inbound++;
+    }
+    hasMore = json.hasMore ?? false;
+    page++;
+  }
+  return inbound;
 }
 
 // Paginates all estimates for the period, groups by business unit name, and
