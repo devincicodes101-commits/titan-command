@@ -645,10 +645,16 @@ function NumField({ label, val, onChange, step = 100 }: {
       <label style={styles.label}>{label}</label>
       <input
         type="number"
-        value={val}
+        // Show 0 as an empty field with a "0" placeholder so the value is
+        // clearable — otherwise `|| 0` snaps a cleared field straight back to 0
+        // and the user can never delete it to type a fresh number.
+        value={val === 0 ? "" : val}
+        placeholder="0"
         min={0}
         step={step}
-        onChange={(e) => onChange(parseFloat(e.target.value) || 0)}
+        onChange={(e) =>
+          onChange(e.target.value === "" ? 0 : parseFloat(e.target.value) || 0)
+        }
         style={styles.input}
       />
     </div>
