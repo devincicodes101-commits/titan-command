@@ -48,6 +48,26 @@ interface Props {
 
 // ─── Trade → Business Unit names ────────────────────────────────────────────
 
+// Business days (Mon-Fri) remaining in the current month, today included.
+function businessDaysLeftInMonth(now: Date): number {
+  const y = now.getFullYear();
+  const m = now.getMonth();
+  const last = new Date(y, m + 1, 0).getDate();
+  let count = 0;
+  for (let d = now.getDate(); d <= last; d++) {
+    const dow = new Date(y, m, d).getDay();
+    if (dow !== 0 && dow !== 6) count++;
+  }
+  return count;
+}
+
+// Business days remaining in the current Mon-Sun week, today included.
+function businessDaysLeftInWeek(now: Date): number {
+  const dow = now.getDay(); // 0=Sun .. 6=Sat
+  if (dow === 0 || dow === 6) return 0; // weekend — this week's workdays are done
+  return 6 - dow; // Mon(1)->5 ... Fri(5)->1
+}
+
 function unitNamesForTrade(trade: Trade, savedUnits?: SavedGoals["businessUnits"]) {
   if (savedUnits && savedUnits.length > 0) return savedUnits.map((u) => u.name);
   switch (trade) {
@@ -180,7 +200,7 @@ export default function CommandBoard({ savedGoals, serviceTitanConnected, liveRe
     });
   });
 
-  const [deptPerformance, setDeptPerformance] = useState<Record<string, { revenue: number; jobsCompleted: number }>>({
+  const [deptPerformance] = useState<Record<string, { revenue: number; jobsCompleted: number }>>({
     Maintenance: liveDeptPerformance?.Maintenance ?? { revenue: 0, jobsCompleted: 0 },
     Service: liveDeptPerformance?.Service ?? { revenue: 0, jobsCompleted: 0 },
     Installation: liveDeptPerformance?.Installation ?? { revenue: 0, jobsCompleted: 0 },
@@ -232,6 +252,17 @@ export default function CommandBoard({ savedGoals, serviceTitanConnected, liveRe
     );
   }, [trade]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Working days left are dynamic — recompute from today's date on mount so the
+  // board counts down through the month and week instead of using a fixed number.
+  useEffect(() => {
+    const now = new Date();
+    setInputs((prev) => ({
+      ...prev,
+      workingDaysLeftMonth: businessDaysLeftInMonth(now),
+      workingDaysLeftWeek: businessDaysLeftInWeek(now),
+    }));
+  }, []);
+
   const setInput = useCallback((key: keyof BoardInputs, val: number) => {
     setInputs((prev) => ({ ...prev, [key]: val }));
   }, []);
@@ -254,9 +285,6 @@ export default function CommandBoard({ savedGoals, serviceTitanConnected, liveRe
     ? { revenue: visibleUnits[salesUnitIndex].mtdSales, jobsCompleted: unitOutputs[salesUnitIndex].closedJobs, avgTicket: unitOutputs[salesUnitIndex].avgSale }
     : { revenue: 0, jobsCompleted: 0, avgTicket: 0 };
 
-  const setDept = useCallback((name: string, key: "revenue" | "jobsCompleted", val: number) => {
-    setDeptPerformance((prev) => ({ ...prev, [name]: { ...prev[name], [key]: val } }));
-  }, []);
 
   let sectionNum = 5;
   const installSectionNum = showInstallBoard(trade) ? sectionNum++ : null;
@@ -401,7 +429,7 @@ export default function CommandBoard({ savedGoals, serviceTitanConnected, liveRe
               tip="Total previously sold work scheduled to be completed today from the business-unit table." />
             <ResultBox label="New Revenue Needed Today" value={fmtCurrency(board.newRevenueNeeded)}
               tip="Daily Command Goal minus previously sold work scheduled for completion today." />
-            <ResultBox label="Monthly Revenue Pace" value={fmtCurrency(board.monthlyPace)}
+            <ResultBox label="MTD Daily Revenue Pace" value={fmtCurrency(board.monthlyPace)}
               tip="MTD revenue divided by elapsed working days this month." />
             <ResultBox label="Daily Pace Needed" value={fmtCurrency(board.revenueNeededToday)}
               tip="Monthly revenue still needed divided by working days left in the month." />
@@ -433,9 +461,11 @@ export default function CommandBoard({ savedGoals, serviceTitanConnected, liveRe
                         {unit.name}
                       </td>
                       <td style={styles.td}>
-                        <input type="number" value={unit.mtdOpps} min={0}
-                          onChange={(e) => setUnit(i, "mtdOpps", parseFloat(e.target.value) || 0)}
-                          style={styles.tableInput} />
+                        {liveCloseRateByBU
+                          ? <div style={styles.stLocked}>{unit.mtdOpps} ⚡</div>
+                          : <input type="number" value={unit.mtdOpps} min={0}
+                              onChange={(e) => setUnit(i, "mtdOpps", parseFloat(e.target.value) || 0)}
+                              style={styles.tableInput} />}
                       </td>
                       <td style={styles.td}>
                         <input type="number" value={unit.targetCloseRate} min={0} max={100}
@@ -443,14 +473,18 @@ export default function CommandBoard({ savedGoals, serviceTitanConnected, liveRe
                           style={styles.tableInput} />
                       </td>
                       <td style={styles.td}>
-                        <input type="number" value={unit.actualCloseRate} min={0} max={100}
-                          onChange={(e) => setUnit(i, "actualCloseRate", parseFloat(e.target.value) || 0)}
-                          style={styles.tableInput} />
+                        {liveCloseRateByBU
+                          ? <div style={styles.stLocked}>{unit.actualCloseRate} ⚡</div>
+                          : <input type="number" value={unit.actualCloseRate} min={0} max={100}
+                              onChange={(e) => setUnit(i, "actualCloseRate", parseFloat(e.target.value) || 0)}
+                              style={styles.tableInput} />}
                       </td>
                       <td style={styles.td}>
-                        <input type="number" value={unit.mtdSales} min={0}
-                          onChange={(e) => setUnit(i, "mtdSales", parseFloat(e.target.value) || 0)}
-                          style={styles.tableInput} />
+                        {liveCloseRateByBU
+                          ? <div style={styles.stLocked}>{unit.mtdSales} ⚡</div>
+                          : <input type="number" value={unit.mtdSales} min={0}
+                              onChange={(e) => setUnit(i, "mtdSales", parseFloat(e.target.value) || 0)}
+                              style={styles.tableInput} />}
                       </td>
                       <td style={styles.td}>
                         {unit.includesInstall
@@ -554,22 +588,6 @@ export default function CommandBoard({ savedGoals, serviceTitanConnected, liveRe
                 const avgTicket = d.jobsCompleted > 0 ? d.revenue / d.jobsCompleted : 0;
                 return <DeptCard key={name} label={name} revenue={d.revenue} jobsCompleted={d.jobsCompleted} avgTicket={avgTicket} />;
               })}
-            </div>
-            <div style={{ marginTop: "20px" }}>
-              <h4 style={styles.h4}>{liveDeptPerformance ? "Maintenance / Service / Installation (Live ⚡, editable)" : "Manual Entry — Maintenance / Service / Installation"}</h4>
-              <div className="tf-input-grid" style={styles.inputGrid}>
-                {(["Maintenance", "Service", "Installation"] as const).map((name) => (
-                  <div key={name} style={{ display: "contents" }}>
-                    <NumField label={`${name} Revenue`} val={deptPerformance[name].revenue} onChange={(v) => setDept(name, "revenue", v)} />
-                    <NumField label={`${name} Jobs Completed`} val={deptPerformance[name].jobsCompleted} onChange={(v) => setDept(name, "jobsCompleted", v)} step={1} />
-                  </div>
-                ))}
-              </div>
-              <p style={styles.note}>
-                {liveDeptPerformance
-                  ? "Sales, Maintenance, Service, and Installation all pull live from ServiceTitan (matched by business unit name) — still fully editable if you need to override."
-                  : "Sales figures above are pulled automatically from the Equipment Sales row in the Business Unit Scoreboard. Maintenance, Service, and Installation are manual entry until the ServiceTitan connection is built."}
-              </p>
             </div>
           </section>
         )}
@@ -739,12 +757,13 @@ const styles: Record<string, React.CSSProperties> = {
   resultValue: { display: "block", fontFamily: "'Space Grotesk',Inter,Arial,sans-serif", fontWeight: 900, fontSize: "24px", letterSpacing: "-.04em" },
 
   tableWrap: { overflowX: "auto" },
-  table: { width: "100%", borderCollapse: "collapse", minWidth: "980px" },
-  th: { textAlign: "left", color: "var(--tf-muted)", fontSize: "10px", textTransform: "uppercase", letterSpacing: ".12em", padding: "12px", borderBottom: "1px solid rgba(164,140,122,.22)", whiteSpace: "nowrap" },
-  td: { padding: "10px 12px", borderBottom: "1px solid rgba(164,140,122,.12)", verticalAlign: "middle", color: "var(--tf-text)" },
-  tableInput: { background: "#0e0e0e", border: "none", borderBottom: "2px solid rgba(86,67,52,.7)", color: "var(--tf-text)", padding: "8px", outline: "none", fontFamily: "'Space Grotesk',Inter,Arial,sans-serif", fontSize: "15px", fontWeight: 800, borderRadius: 0, minWidth: "92px" },
+  table: { width: "100%", borderCollapse: "collapse", minWidth: "760px" },
+  th: { textAlign: "left", color: "var(--tf-muted)", fontSize: "10px", textTransform: "uppercase", letterSpacing: ".08em", padding: "10px 8px", borderBottom: "1px solid rgba(164,140,122,.22)", whiteSpace: "nowrap" },
+  td: { padding: "8px 8px", borderBottom: "1px solid rgba(164,140,122,.12)", verticalAlign: "middle", color: "var(--tf-text)" },
+  tableInput: { background: "#0e0e0e", border: "none", borderBottom: "2px solid rgba(86,67,52,.7)", color: "var(--tf-text)", padding: "8px", outline: "none", fontFamily: "'Space Grotesk',Inter,Arial,sans-serif", fontSize: "14px", fontWeight: 800, borderRadius: 0, minWidth: "60px" },
   tableOutput: { fontFamily: "'Space Grotesk',Inter,Arial,sans-serif", fontWeight: 900, whiteSpace: "nowrap" },
-  lockedCell: { minWidth: "92px", padding: "8px", background: "rgba(164,140,122,.08)", border: "1px solid rgba(164,140,122,.18)", color: "var(--tf-muted)", fontFamily: "'Space Grotesk',Inter,Arial,sans-serif", fontSize: "13px", fontWeight: 900, textAlign: "center", letterSpacing: ".08em" },
+  stLocked: { minWidth: "52px", padding: "8px 6px", background: "rgba(255,140,0,.06)", border: "1px solid rgba(255,140,0,.20)", color: "var(--tf-text)", fontFamily: "'Space Grotesk',Inter,Arial,sans-serif", fontSize: "14px", fontWeight: 900, textAlign: "center", whiteSpace: "nowrap" },
+  lockedCell: { minWidth: "60px", padding: "8px", background: "rgba(164,140,122,.08)", border: "1px solid rgba(164,140,122,.18)", color: "var(--tf-muted)", fontFamily: "'Space Grotesk',Inter,Arial,sans-serif", fontSize: "13px", fontWeight: 900, textAlign: "center", letterSpacing: ".08em" },
   pill: { display: "inline-flex", alignItems: "center", justifyContent: "center", minWidth: "90px", padding: "6px 10px", border: "1px solid currentColor", fontFamily: "'Space Grotesk',Inter,Arial,sans-serif", fontSize: "12px", fontWeight: 900, textTransform: "uppercase", letterSpacing: ".06em" },
 
   insight: { color: "var(--tf-text-muted)", lineHeight: 1.6, margin: 0 },
