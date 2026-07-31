@@ -15,7 +15,27 @@ export async function GET() {
       supabase.from("tenants").select("trade").eq("id", session.user.tenantId).single(),
     ]);
 
-    return NextResponse.json({ goals, units, trade: tenant?.trade });
+    // Map snake_case DB columns to the camelCase the client expects. Without this,
+    // every value reads back as undefined -> the form shows 0 and appears not to
+    // have saved, and unit targets (close %, RPL) get wiped to null on the next save.
+    return NextResponse.json({
+      goals: goals
+        ? {
+            monthlyRevenueGoal: goals.monthly_revenue_goal,
+            monthlySoldHourGoal: goals.monthly_sold_hour_goal,
+            weeklyRevenueGoal: goals.weekly_revenue_goal,
+            weeklySoldHourGoal: goals.weekly_sold_hour_goal,
+            workingDaysMonth: goals.working_days_month,
+          }
+        : null,
+      units: (units ?? []).map((u) => ({
+        name: u.name,
+        targetCloseRate: u.target_close_rate,
+        targetRpl: u.target_rpl,
+        includesInstall: u.includes_install,
+      })),
+      trade: tenant?.trade,
+    });
   } catch (err) {
     console.error(err);
     const message = err instanceof Error ? err.message : String(err);
