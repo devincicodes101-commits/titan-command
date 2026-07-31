@@ -5,7 +5,7 @@ import {
   getTotalRevenue,
   getBusinessUnits,
   getDepartmentPerformance,
-  getCallsRan,
+  getCompletedJobsCount,
   getSoldHours,
   getCloseRateByBU,
   getInstallCrewCount,
@@ -66,18 +66,26 @@ export async function POST() {
   const wtdRevenue = await getTotalRevenue(creds, weekStart, today);
   const yesterdayRevenue = await getTotalRevenue(creds, yesterdayStr, yesterdayStr);
 
-  const [businessUnits, callsRan, closeRateByBU, todaysOpportunities] = await Promise.all([
-    getBusinessUnits(creds),
-    getCallsRan(creds, firstOfMonth, today),
-    getCloseRateByBU(creds, firstOfMonth, today),
-    getTodaysOpportunities(creds, today),
-  ]);
+  const businessUnits = await getBusinessUnits(creds);
 
   const findUnit = (keyword: string) =>
     businessUnits.find((u) => u.name.toLowerCase().includes(keyword));
   const maintenanceUnit = findUnit("maintenance");
   const serviceUnit = findUnit("service");
   const installUnit = findUnit("install");
+
+  // #3: "Calls Ran" is completed jobs this month in the Demand Service + Maintenance
+  // units (the demand-call and maintenance business units), NOT inbound phone calls.
+  const callsRanUnits = [serviceUnit, maintenanceUnit].filter(
+    (u): u is { id: number; name: string; active: boolean } => Boolean(u)
+  );
+
+  const [callsRanCounts, closeRateByBU, todaysOpportunities] = await Promise.all([
+    Promise.all(callsRanUnits.map((u) => getCompletedJobsCount(creds, u.id, firstOfMonth))),
+    getCloseRateByBU(creds, firstOfMonth, today),
+    getTodaysOpportunities(creds, today),
+  ]);
+  const callsRan = callsRanCounts.reduce((a, b) => a + b, 0);
   const deptUnits = [maintenanceUnit, serviceUnit, installUnit].filter(
     (u): u is { id: number; name: string; active: boolean } => Boolean(u)
   );
