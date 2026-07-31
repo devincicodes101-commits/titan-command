@@ -181,7 +181,7 @@ export default function CommandBoard({ savedGoals, serviceTitanConnected, liveRe
     installCrews: liveInstallCrewCount ?? 2,
     installRevenue: liveDeptPerformance?.Installation?.revenue ?? 25000,
     daysBookedOut: 7,
-    equipmentSalesRevenue: 39016,
+    equipmentSalesRevenue: liveDeptPerformance?.Installation?.revenue ?? 39016,
   });
   const [units, setUnits] = useState<UnitInputs[]>(() => {
     const base = defaultUnits(trade, savedGoals?.businessUnits);
@@ -235,7 +235,10 @@ export default function CommandBoard({ savedGoals, serviceTitanConnected, liveRe
 
   useEffect(() => {
     const installRev = liveDeptPerformance?.Installation?.revenue;
-    if (installRev != null) setInputs((prev) => ({ ...prev, installRevenue: installRev }));
+    if (installRev != null)
+      // #12: MTD Equipment Sales Revenue is the completed (invoiced) revenue in the
+      // HVAC-Install business unit, the same figure that drives Invoiced Install Revenue.
+      setInputs((prev) => ({ ...prev, installRevenue: installRev, equipmentSalesRevenue: installRev }));
   }, [liveDeptPerformance?.Installation?.revenue]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Re-map unit names when trade changes (but keep numeric values)
@@ -566,7 +569,7 @@ export default function CommandBoard({ savedGoals, serviceTitanConnected, liveRe
                   <NumField label={liveInstallCrewCount != null ? "Install Crews Working Today (Live ⚡)" : "Install Crews Working Today"} val={inputs.installCrews ?? 2} onChange={(v) => setInput("installCrews", v)} step={1} />
                   <NumField label={liveDeptPerformance?.Installation ? "MTD Invoiced Install Revenue (Live ⚡)" : "MTD Invoiced Install Revenue"} val={inputs.installRevenue ?? 25000} onChange={(v) => setInput("installRevenue", v)} />
                   <NumField label="Days Booked Out" val={inputs.daysBookedOut ?? 7} onChange={(v) => setInput("daysBookedOut", v)} step={1} />
-                  <NumField label="MTD Equipment Sales Revenue" val={inputs.equipmentSalesRevenue ?? 39016} onChange={(v) => setInput("equipmentSalesRevenue", v)} />
+                  <NumField label={liveDeptPerformance?.Installation ? "MTD Equipment Sales Revenue (Live ⚡)" : "MTD Equipment Sales Revenue"} val={inputs.equipmentSalesRevenue ?? 39016} onChange={(v) => setInput("equipmentSalesRevenue", v)} />
                 </InputGrid>
               </div>
               <div style={styles.card2}>
