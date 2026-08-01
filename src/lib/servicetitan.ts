@@ -519,11 +519,18 @@ export async function getCloseRateByBU(
   const isInstall = (n: string) => n.toLowerCase().includes("install");
 
   // Jobs that have an appointment in the period.
+  // MTD Opps = jobs with an appointment ANYWHERE THIS MONTH (client: "this
+  // month"), so the window runs 1st -> month-end, not 1st -> today. Otherwise the
+  // board reads 0 early in the month while jobs are already booked for later.
+  //
   // The appointments endpoint SILENTLY IGNORES startsOnOrBefore (returns every
   // appointment ever); the real upper-bound param is startsBefore. Filter the
-  // start date in code as well so future appointments never leak into MTD Opps.
+  // start date in code as well so nothing outside this month leaks in.
+  const [fYear, fMonth] = from.split("-").map(Number);
+  const lastDay = new Date(Date.UTC(fYear, fMonth, 0)).getUTCDate();
+  const monthEndDate = `${fYear}-${String(fMonth).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`;
   const apptWinStart = new Date(localStart(from)).getTime();
-  const apptWinEnd = new Date(localEnd(to)).getTime();
+  const apptWinEnd = new Date(localEnd(monthEndDate)).getTime();
   const apptJobIds = new Set<number>();
   {
     let page = 1;
@@ -531,7 +538,7 @@ export async function getCloseRateByBU(
     while (hasMore) {
       const res = await fetch(
         `${API_BASE}/jpm/v2/tenant/${creds.stTenantId}/appointments` +
-          `?startsOnOrAfter=${localStart(from)}&startsBefore=${localEnd(to)}` +
+          `?startsOnOrAfter=${localStart(from)}&startsBefore=${localEnd(monthEndDate)}` +
           `&page=${page}&pageSize=500`,
         { headers }
       );
