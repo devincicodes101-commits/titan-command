@@ -257,20 +257,28 @@ export async function getTodaysOpportunities(
   const headers = { Authorization: `Bearer ${token}`, "ST-App-Key": creds.appKey };
 
   // 1. Every appointment starting today -> the set of jobs on the board.
+  // NB: the appointments endpoint SILENTLY IGNORES startsOnOrBefore (it returned
+  // all 17,235 appointments ever) — the real upper-bound param is startsBefore.
+  // Even so, never trust it: filter each appointment's start date in code too.
+  const winStart = new Date(localStart(today)).getTime();
+  const winEnd = new Date(localEnd(today)).getTime();
   const jobIds = new Set<number>();
   let page = 1;
   let hasMore = true;
   while (hasMore) {
     const res = await fetch(
       `${API_BASE}/jpm/v2/tenant/${creds.stTenantId}/appointments` +
-        `?startsOnOrAfter=${localStart(today)}&startsOnOrBefore=${localEnd(today)}` +
+        `?startsOnOrAfter=${localStart(today)}&startsBefore=${localEnd(today)}` +
         `&page=${page}&pageSize=500`,
       { headers }
     );
     if (!res.ok) throw new Error(`Appointments error (${res.status}): ${await res.text()}`);
     const json = await res.json();
-    for (const appt of (json.data ?? []) as { jobId?: unknown }[]) {
-      if (typeof appt.jobId === "number") jobIds.add(appt.jobId);
+    for (const appt of (json.data ?? []) as { jobId?: unknown; start?: unknown }[]) {
+      const t = typeof appt.start === "string" ? new Date(appt.start).getTime() : NaN;
+      if (typeof appt.jobId === "number" && Number.isFinite(t) && t >= winStart && t <= winEnd) {
+        jobIds.add(appt.jobId);
+      }
     }
     hasMore = json.hasMore ?? false;
     page++;
@@ -511,6 +519,11 @@ export async function getCloseRateByBU(
   const isInstall = (n: string) => n.toLowerCase().includes("install");
 
   // Jobs that have an appointment in the period.
+  // The appointments endpoint SILENTLY IGNORES startsOnOrBefore (returns every
+  // appointment ever); the real upper-bound param is startsBefore. Filter the
+  // start date in code as well so future appointments never leak into MTD Opps.
+  const apptWinStart = new Date(localStart(from)).getTime();
+  const apptWinEnd = new Date(localEnd(to)).getTime();
   const apptJobIds = new Set<number>();
   {
     let page = 1;
@@ -518,14 +531,17 @@ export async function getCloseRateByBU(
     while (hasMore) {
       const res = await fetch(
         `${API_BASE}/jpm/v2/tenant/${creds.stTenantId}/appointments` +
-          `?startsOnOrAfter=${localStart(from)}&startsOnOrBefore=${localEnd(to)}` +
+          `?startsOnOrAfter=${localStart(from)}&startsBefore=${localEnd(to)}` +
           `&page=${page}&pageSize=500`,
         { headers }
       );
       if (!res.ok) throw new Error(`Appointments error (${res.status}): ${await res.text()}`);
       const json = await res.json();
-      for (const a of (json.data ?? []) as { jobId?: unknown }[]) {
-        if (typeof a.jobId === "number") apptJobIds.add(a.jobId);
+      for (const a of (json.data ?? []) as { jobId?: unknown; start?: unknown }[]) {
+        const t = typeof a.start === "string" ? new Date(a.start).getTime() : NaN;
+        if (typeof a.jobId === "number" && Number.isFinite(t) && t >= apptWinStart && t <= apptWinEnd) {
+          apptJobIds.add(a.jobId);
+        }
       }
       hasMore = json.hasMore ?? false;
       page++;
