@@ -82,7 +82,7 @@ export async function POST() {
 
   const [callsRanCounts, closeRateByBU, todaysOpportunities] = await Promise.all([
     Promise.all(callsRanUnits.map((u) => getCompletedJobsCount(creds, u.id, firstOfMonth))),
-    getCloseRateByBU(creds, firstOfMonth, today),
+    getCloseRateByBU(creds, firstOfMonth, today, businessUnits),
     getTodaysOpportunities(creds, today),
   ]);
   const callsRan = callsRanCounts.reduce((a, b) => a + b, 0);

@@ -428,9 +428,11 @@ export async function getSoldHours(
 export async function getCloseRateByBU(
   creds: STCredentials,
   from: string,
-  to: string
+  to: string,
+  businessUnits: { id: number; name: string }[]
 ): Promise<Record<string, STCloseRateByBU>> {
   const token = await getAccessToken(creds);
+  const headers = { Authorization: `Bearer ${token}`, "ST-App-Key": creds.appKey };
 
   async function paginateEstimates(queryStr: string): Promise<Record<string, unknown>[]> {
     const out: Record<string, unknown>[] = [];
@@ -483,39 +485,15 @@ export async function getCloseRateByBU(
     return !Number.isFinite(t) || (t >= startMs && t <= endMs);
   });
 
-  type BUAgg = {
-    oppsTotal: number;
-    oppsSold: number;
-    oppsDismissed: number;
-    salesCount: number;
-    subtotal: number;
-    soldHours: number;
-  };
-  const byBU: Record<string, BUAgg> = {};
-  const ensure = (bu: string): BUAgg =>
-    (byBU[bu] ??= {
-      oppsTotal: 0,
-      oppsSold: 0,
-      oppsDismissed: 0,
-      salesCount: 0,
-      subtotal: 0,
-      soldHours: 0,
-    });
-
-  for (const est of created) {
-    const bu = est.businessUnitName as string | null;
-    if (!bu) continue;
-    const agg = ensure(bu);
-    agg.oppsTotal++;
-    const status = (est.status as { name?: string } | null)?.name;
-    if (status === "Sold") agg.oppsSold++;
-    else if (status === "Dismissed") agg.oppsDismissed++;
-  }
-
+  // Sales $ and sold hours stay estimate-based (validated against ST's report).
+  type EstAgg = { salesCount: number; subtotal: number; soldHours: number };
+  const estByBU: Record<string, EstAgg> = {};
+  const ensureEst = (bu: string): EstAgg =>
+    (estByBU[bu] ??= { salesCount: 0, subtotal: 0, soldHours: 0 });
   for (const est of sold) {
     const bu = est.businessUnitName as string | null;
     if (!bu) continue;
-    const agg = ensure(bu);
+    const agg = ensureEst(bu);
     agg.salesCount++;
     agg.subtotal += Number(est.subtotal) || 0;
     const items = (est.items as { qty?: number; sku?: { soldHours?: number } }[]) ?? [];
@@ -524,17 +502,87 @@ export async function getCloseRateByBU(
     }
   }
 
+  // ── Job-based Opps + Close % (client definitions) ──────────────────────────
+  // #6: MTD Opps = jobs with an appointment THIS MONTH, excluding HVAC-Install.
+  // #8: Actual Close % = jobs with a sold estimate / jobs that have an outcome,
+  //     excluding jobs still Scheduled or InProgress with no outcome yet.
+  const buNameById = new Map<number, string>();
+  for (const b of businessUnits) buNameById.set(b.id, b.name);
+  const isInstall = (n: string) => n.toLowerCase().includes("install");
+
+  // Jobs that have an appointment in the period.
+  const apptJobIds = new Set<number>();
+  {
+    let page = 1;
+    let hasMore = true;
+    while (hasMore) {
+      const res = await fetch(
+        `${API_BASE}/jpm/v2/tenant/${creds.stTenantId}/appointments` +
+          `?startsOnOrAfter=${localStart(from)}&startsOnOrBefore=${localEnd(to)}` +
+          `&page=${page}&pageSize=500`,
+        { headers }
+      );
+      if (!res.ok) throw new Error(`Appointments error (${res.status}): ${await res.text()}`);
+      const json = await res.json();
+      for (const a of (json.data ?? []) as { jobId?: unknown }[]) {
+        if (typeof a.jobId === "number") apptJobIds.add(a.jobId);
+      }
+      hasMore = json.hasMore ?? false;
+      page++;
+    }
+  }
+
+  // Resolve each job to its business unit + status (batched by ids).
+  const jobsById = new Map<number, { bu: string; status: string }>();
+  const jobIdList = [...apptJobIds];
+  for (let i = 0; i < jobIdList.length; i += 50) {
+    const chunk = jobIdList.slice(i, i + 50).join(",");
+    const res = await fetch(
+      `${API_BASE}/jpm/v2/tenant/${creds.stTenantId}/jobs?ids=${chunk}&pageSize=50`,
+      { headers }
+    );
+    if (!res.ok) throw new Error(`Jobs error (${res.status}): ${await res.text()}`);
+    const json = await res.json();
+    for (const j of (json.data ?? []) as { id: number; businessUnitId?: number; jobStatus?: unknown }[]) {
+      jobsById.set(j.id, {
+        bu: buNameById.get(j.businessUnitId as number) ?? "",
+        status: String(j.jobStatus ?? ""),
+      });
+    }
+  }
+
+  // Jobs that carry a Sold estimate (created-this-month or sold-this-month sets).
+  const soldJobIds = new Set<number>();
+  for (const est of [...created, ...sold]) {
+    if ((est.status as { name?: string } | null)?.name === "Sold" && typeof est.jobId === "number") {
+      soldJobIds.add(est.jobId as number);
+    }
+  }
+
+  type JobStat = { opps: number; won: number; open: number };
+  const jobByBU: Record<string, JobStat> = {};
+  for (const [jid, j] of jobsById) {
+    if (!j.bu || isInstall(j.bu)) continue; // #6: exclude HVAC-Install
+    const st = (jobByBU[j.bu] ??= { opps: 0, won: 0, open: 0 });
+    st.opps++;
+    if (soldJobIds.has(jid)) st.won++;
+    else if (j.status === "Scheduled" || j.status === "InProgress") st.open++; // #8: still open
+  }
+
+  // ── Merge estimate $/hrs with job-based opps/close ─────────────────────────
   const result: Record<string, STCloseRateByBU> = {};
-  for (const [bu, agg] of Object.entries(byBU)) {
-    const closeable = agg.oppsSold + agg.oppsDismissed;
+  const allBUs = new Set([...Object.keys(estByBU), ...Object.keys(jobByBU)]);
+  for (const bu of allBUs) {
+    if (isInstall(bu)) continue;
+    const e = estByBU[bu] ?? { salesCount: 0, subtotal: 0, soldHours: 0 };
+    const j = jobByBU[bu] ?? { opps: 0, won: 0, open: 0 };
+    const closeable = j.opps - j.open; // outcome reached
     result[bu] = {
-      closeRate: closeable > 0 ? round2((agg.oppsSold / closeable) * 100) : 0,
-      // Sales, closed jobs and sold hours all come from the SOLD set so that
-      // Company Average Sale (sales / closedJobs) divides like with like.
-      mtdSales: round2(agg.subtotal),
-      closedJobs: agg.salesCount,
-      soldHours: round2(agg.soldHours),
-      mtdOpps: agg.oppsTotal,
+      closeRate: closeable > 0 ? round2((j.won / closeable) * 100) : 0,
+      mtdSales: round2(e.subtotal),
+      closedJobs: e.salesCount,
+      soldHours: round2(e.soldHours),
+      mtdOpps: j.opps,
     };
   }
   return result;
