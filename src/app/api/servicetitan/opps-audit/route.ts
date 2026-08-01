@@ -79,18 +79,22 @@ export async function GET() {
     }
   }
 
-  const byBU: Record<string, { monthToDate: number; wholeMonth: number; sample: unknown[] }> = {};
+  const byBU: Record<string, { wholeMonth: number; byStatus: Record<string, number>; jobs: unknown[] }> = {};
   for (const [jid, j] of jobs) {
     if (!j.bu || isInstall(j.bu)) continue;
     const start = apptByJob.get(jid)!;
-    const s = (byBU[j.bu] ??= { monthToDate: 0, wholeMonth: 0, sample: [] });
+    const s = (byBU[j.bu] ??= { wholeMonth: 0, byStatus: {}, jobs: [] });
     s.wholeMonth++;
-    if (start <= todayEnd) s.monthToDate++;
-    if (s.sample.length < 8) s.sample.push({ jobNumber: j.jobNumber, apptDate: new Date(start).toISOString().slice(0,10), status: j.status });
+    s.byStatus[j.status] = (s.byStatus[j.status] ?? 0) + 1;
+    s.jobs.push({ jobNumber: j.jobNumber, apptDate: new Date(start).toISOString().slice(0,10), status: j.status });
+  }
+  // sort each BU's jobs by appointment date for easy calendar comparison
+  for (const bu of Object.values(byBU)) {
+    (bu.jobs as { apptDate: string }[]).sort((a, b) => a.apptDate.localeCompare(b.apptDate));
   }
 
   return NextResponse.json({
-    note: "monthToDate = the board's current MTD Opps (1st -> today). wholeMonth = all of this month's booked appointment-jobs (the number if we switch #6 to whole-month). HVAC-Install excluded. apptDate on each sample should be in the current month — no future-month leaks.",
+    note: "wholeMonth = the board's MTD Opps. byStatus breaks it down (e.g. how many Canceled). jobs = the FULL list behind the number, sorted by appointment date, so you can tick each against the calendar. HVAC-Install excluded.",
     today: nowLocal,
     byBusinessUnit: byBU,
   });
